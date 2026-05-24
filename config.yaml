@@ -1,0 +1,82 @@
+project:
+  title: "AI-Enabled Minimal Viable Testing for Additive Manufacturing"
+  student_name: "Fangxing Lin"
+  student_id: "5736310"
+  programme: "MSc Applied Artificial Intelligence"
+  supervisor: "Greg Gibbons"
+
+paths:
+  raw_data: "data/raw"
+  interim_data: "data/interim"
+  processed_data: "data/processed"
+  outputs: "outputs"
+
+search:
+  years:
+    from: 2015
+    to: 2026
+
+  journals:
+    - "Additive Manufacturing"
+    - "Journal of Materials Processing Technology"
+    - "Journal of Manufacturing Processes"
+    - "Virtual and Physical Prototyping"
+    - "Progress in Additive Manufacturing"
+    - "Advanced Engineering Materials"
+
+  keywords:
+    - "metal additive manufacturing mechanical properties"
+    - "laser powder bed fusion tensile properties porosity"
+    - "additive manufacturing fatigue Ti-6Al-4V"
+    - "LPBF process parameters yield strength UTS elongation"
+    - "additive manufacturing fatigue database"
+
+data_policy:
+  allowed_sources:
+    - "public_dataset"
+    - "open_access_article"
+    - "supplementary_material"
+    - "literature_extracted_data"
+
+  excluded_sources:
+    - "confidential_organisational_data"
+    - "human_participant_data"
+    - "interviews"
+    - "questionnaires"
+    - "non-public_full_text"
+
+schema:
+  input_variables:
+    - "alloy"
+    - "alloy_family"
+    - "am_process"
+    - "build_orientation"
+    - "surface_condition"
+    - "heat_treatment"
+    - "laser_power_W"
+    - "scan_speed_mm_s"
+    - "hatch_spacing_um"
+    - "layer_thickness_um"
+    - "ved_J_mm3"
+    - "defect_type"
+    - "porosity_percent"
+    - "residual_stress_indicator"
+
+  output_variables:
+    - "yield_strength_MPa"
+    - "uts_MPa"
+    - "elongation_percent"
+    - "fatigue_life_cycles"
+    - "stress_amplitude_MPa"
+    - "r_ratio"
+    - "runout"
+    - "failure_mode"
+
+openai:
+  model: "gpt-4o-mini"
+  max_chunk_chars: 6000
+  temperature: 0.0
+
+modelling:
+  random_state: 42
+  test_size: 0.2
