@@ -1,23 +1,28 @@
-"""
-Step 03: Parse documents.
+from __future__ import annotations
 
-This script will later parse open PDFs, supplementary files, and datasets into
-machine-readable text or tables.
-"""
-
-from am_mvt.config import get_path
+from am_mvt.ingestion.load_open_datasets import save_open_dataset_preview
+from am_mvt.parsing.chunk_text import chunk_parsed_text_files
+from am_mvt.parsing.parse_pdf_text import parse_all_pdfs
 
 
 def main() -> None:
-    parsed_text_dir = get_path("data", "interim", "parsed_text")
-    text_chunks_dir = get_path("data", "interim", "text_chunks")
+    parsed_files = parse_all_pdfs()
+    chunk_files = chunk_parsed_text_files()
 
-    parsed_text_dir.mkdir(parents=True, exist_ok=True)
-    text_chunks_dir.mkdir(parents=True, exist_ok=True)
+    (
+        raw_output,
+        standard_output,
+        report_output,
+        mapping_report_output,
+    ) = save_open_dataset_preview()
 
-    print("Step 03 complete: parsing folders prepared.")
-    print(f"Parsed text folder: {parsed_text_dir}")
-    print(f"Text chunks folder: {text_chunks_dir}")
+    print("Step 03 complete: documents and open datasets parsed.")
+    print(f"Parsed PDF text files: {len(parsed_files)}")
+    print(f"Text chunks created: {len(chunk_files)}")
+    print(f"Raw open dataset preview: {raw_output}")
+    print(f"Standardised open dataset preview: {standard_output}")
+    print(f"Open dataset load report: {report_output}")
+    print(f"Column mapping report: {mapping_report_output}")
 
 
 if __name__ == "__main__":

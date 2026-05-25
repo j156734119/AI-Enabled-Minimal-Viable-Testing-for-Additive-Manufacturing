@@ -84,24 +84,31 @@ outputs/
 
 Create and activate a virtual environment:
 
+```
 python -m venv .venv
 .venv\Scripts\activate
+```
 
 Install dependencies:
 
+```
 pip install -r requirements.txt
 pip install -e .
+```
 
 Create a local environment file:
 
+```
 copy .env.example .env
+```
 
 Then fill in the real values in .env.
 
-Workflow
+## Workflow
 
 Run the project step by step:
 
+```
 python scripts/01_search_sources.py
 python scripts/02_download_open_files.py
 python scripts/03_parse_documents.py
@@ -110,27 +117,27 @@ python scripts/05_build_dataset.py
 python scripts/06_train_models.py
 python scripts/07_explain_models.py
 python scripts/08_generate_testing_matrix.py
-Important Notes
+```
+
+## mportant Notes
 
 Raw PDFs, confidential files, API keys, and large intermediate files should not be committed to GitHub.
 
 The OpenAI API is used only as an assistive NLP tool for candidate information extraction from lawful public sources. Extracted records must be validated before being used for analysis.
 
-Licence
+## Licence
 
 This repository is released under the MIT License for the code written by the author. External datasets and papers remain under their original licences.
 
 
----
+src/am_mvt/__init__.py`
 
-# 7. `src/am_mvt/__init__.py`
-
-```python
-"""
-am_mvt
 
 Python package for the dissertation project:
+
+```
 AI-Enabled Minimal Viable Testing for Additive Manufacturing.
-"""
+
 
 __version__ = "0.1.0"
+```

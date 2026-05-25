@@ -1,74 +1,61 @@
-"""
-Step 05: Build structured dataset.
+from __future__ import annotations
 
-This script will later combine validated extraction outputs into structured
-CSV files for modelling.
-"""
-
-from pathlib import Path
-
+from am_mvt.cleaning.build_master_dataset import save_master_dataset
 from am_mvt.config import get_path
 
 
-def create_empty_csv_if_missing(path: Path, header: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not path.exists():
-        path.write_text(header + "\n", encoding="utf-8")
-
-
 def main() -> None:
-    processed_dir = get_path("data", "processed")
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    master_path, modelling_path, report_path, master_df = save_master_dataset()
 
-    create_empty_csv_if_missing(
-        processed_dir / "sources.csv",
-        "source_id,doi,title,journal,year,source_type,url,licence,notes",
+    print("Step 05 complete: project-focused master dataset built.")
+    print(f"Master dataset: {master_path}")
+    print(f"Compatibility modelling dataset: {modelling_path}")
+    print(f"Build report: {report_path}")
+    print(f"Rows: {len(master_df)}")
+    print(f"Columns: {len(master_df.columns)}")
+
+    if "source_id" in master_df.columns:
+        print("\nRows by source:")
+        print(master_df["source_id"].value_counts(dropna=False))
+
+    if "task_type" in master_df.columns:
+        print("\nRows by task type:")
+        print(master_df["task_type"].value_counts(dropna=False))
+
+    selected_cols = [
+        "alloy",
+        "alloy_family",
+        "am_process",
+        "laser_power_W",
+        "scan_speed_mm_s",
+        "hatch_spacing_um",
+        "layer_thickness_um",
+        "ved_J_mm3",
+        "yield_strength_MPa",
+        "uts_MPa",
+        "elongation_percent",
+        "fatigue_life_cycles",
+        "stress_amplitude_MPa",
+        "max_stress_MPa",
+        "r_ratio",
+    ]
+
+    existing_cols = [col for col in selected_cols if col in master_df.columns]
+
+    print("\nNon-missing counts for key project fields:")
+    print(master_df[existing_cols].notna().sum())
+
+    validation_path = get_path(
+        "data",
+        "processed",
+        "master_dataset_quick_summary.csv",
     )
 
-    create_empty_csv_if_missing(
-        processed_dir / "build_conditions.csv",
-        (
-            "build_id,source_id,alloy,alloy_family,am_process,"
-            "build_orientation,surface_condition,heat_treatment,"
-            "laser_power_W,scan_speed_mm_s,hatch_spacing_um,"
-            "layer_thickness_um,ved_J_mm3,defect_type,"
-            "porosity_percent,residual_stress_indicator"
-        ),
-    )
+    summary = master_df[existing_cols].notna().sum().reset_index()
+    summary.columns = ["field", "non_missing_count"]
+    summary.to_csv(validation_path, index=False, encoding="utf-8-sig")
 
-    create_empty_csv_if_missing(
-        processed_dir / "mechanical_tests.csv",
-        (
-            "test_id,build_id,test_type,yield_strength_MPa,uts_MPa,"
-            "elongation_percent,fatigue_life_cycles,stress_amplitude_MPa,"
-            "r_ratio,runout,failure_mode"
-        ),
-    )
-
-    create_empty_csv_if_missing(
-        processed_dir / "extraction_audit.csv",
-        (
-            "record_id,source_id,field_name,extracted_value,evidence_text,"
-            "extraction_confidence,needs_human_check,human_checked,"
-            "corrected_value,comment"
-        ),
-    )
-
-    create_empty_csv_if_missing(
-        processed_dir / "modelling_dataset.csv",
-        (
-            "source_id,build_id,test_id,alloy,alloy_family,am_process,"
-            "build_orientation,surface_condition,heat_treatment,"
-            "laser_power_W,scan_speed_mm_s,hatch_spacing_um,"
-            "layer_thickness_um,ved_J_mm3,defect_type,porosity_percent,"
-            "test_type,yield_strength_MPa,uts_MPa,elongation_percent,"
-            "fatigue_life_cycles,runout,failure_mode"
-        ),
-    )
-
-    print("Step 05 complete: processed dataset CSV files prepared.")
-    print(f"Processed data folder: {processed_dir}")
+    print(f"\nQuick summary saved to: {validation_path}")
 
 
 if __name__ == "__main__":

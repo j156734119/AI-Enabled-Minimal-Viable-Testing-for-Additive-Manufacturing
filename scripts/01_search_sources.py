@@ -1,34 +1,16 @@
-"""
-Step 01: Search candidate public sources.
+from __future__ import annotations
 
-This script will later call metadata APIs such as Crossref, OpenAlex,
-or other scholarly search services to identify candidate papers and datasets.
-
-At this initial stage, it creates the expected metadata output file structure.
-"""
-
-from pathlib import Path
-
-from am_mvt.config import get_path, load_config
+from am_mvt.config import load_config
+from am_mvt.ingestion.dataset_registry import write_core_sources_csv
 
 
 def main() -> None:
     config = load_config()
+    output_path = write_core_sources_csv()
 
-    output_dir = get_path("data", "raw", "metadata")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    output_file = output_dir / "candidate_sources.csv"
-
-    if not output_file.exists():
-        output_file.write_text(
-            "doi,title,journal,year,source_type,url,screening_status\n",
-            encoding="utf-8",
-        )
-
-    print("Step 01 complete: source search structure prepared.")
+    print("Step 01 complete: core dataset sources registered.")
     print(f"Project: {config['project']['title']}")
-    print(f"Output file: {output_file}")
+    print(f"Candidate sources saved to: {output_path}")
 
 
 if __name__ == "__main__":
