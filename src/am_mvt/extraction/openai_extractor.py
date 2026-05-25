@@ -2,77 +2,130 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+import time
 from typing import Any
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
 from openai import OpenAI
 
-from am_mvt.config import load_config, load_project_environment
 from am_mvt.extraction.prompts import SYSTEM_PROMPT, build_user_prompt
-from am_mvt.extraction.schemas import AM_EXTRACTION_SCHEMA
+from am_mvt.extraction.schemas import LLM_EXTRACTION_SCHEMA
 
 
-def extract_records_from_text(
-    text: str,
-    source_hint: str = "",
-    model: str | None = None,
+DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+
+def load_environment() -> None:
+    if load_dotenv is not None:
+        load_dotenv()
+
+
+def get_openai_client() -> OpenAI:
+    load_environment()
+
+    if not os.getenv("OPENAI_API_KEY"):
+        raise EnvironmentError(
+            "OPENAI_API_KEY is not set. "
+            "Set it in PowerShell using: $env:OPENAI_API_KEY='your_api_key'"
+        )
+
+    return OpenAI()
+
+
+def extract_output_text(response: Any) -> str:
+    output_text = getattr(response, "output_text", None)
+
+    if output_text:
+        return output_text
+
+    parts: list[str] = []
+
+    for item in getattr(response, "output", []) or []:
+        for content in getattr(item, "content", []) or []:
+            text = getattr(content, "text", None)
+
+            if text:
+                parts.append(text)
+
+    return "\n".join(parts)
+
+
+def extract_records_from_chunk(
+    chunk_text: str,
+    source_file: str,
+    chunk_id: str,
+    model: str = DEFAULT_MODEL,
+    max_retries: int = 3,
+    retry_sleep_seconds: float = 3.0,
 ) -> dict[str, Any]:
-    load_project_environment()
-    config = load_config()
+    client = get_openai_client()
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    user_prompt = build_user_prompt(
+        chunk_text=chunk_text,
+        source_file=source_file,
+        chunk_id=chunk_id,
+    )
 
-    if not api_key or api_key == "your_openai_api_key_here":
-        raise RuntimeError(
-            "OPENAI_API_KEY is missing. Create .env from .env.example and add your key."
-        )
+    last_error: Exception | None = None
 
-    if model is None:
-        model = os.getenv("OPENAI_MODEL") or config.get("openai", {}).get(
-            "model", "gpt-4o-mini"
-        )
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.responses.create(
+                model=model,
+                input=[
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT,
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt,
+                    },
+                ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "am_mechanical_data_extraction",
+                        "strict": True,
+                        "schema": LLM_EXTRACTION_SCHEMA,
+                    }
+                },
+                temperature=0,
+            )
 
-    client = OpenAI(api_key=api_key)
+            raw_text = extract_output_text(response)
+            parsed = json.loads(raw_text)
 
-    response = client.responses.create(
-        model=model,
-        input=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": build_user_prompt(text, source_hint)},
-        ],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "am_extraction_result",
-                "schema": AM_EXTRACTION_SCHEMA,
-                "strict": True,
+            if "records" not in parsed:
+                parsed["records"] = []
+
+            parsed["_metadata"] = {
+                "source_file": source_file,
+                "chunk_id": chunk_id,
+                "model": model,
+                "attempt": attempt,
             }
+
+            return parsed
+
+        except Exception as exc:
+            last_error = exc
+
+            if attempt < max_retries:
+                time.sleep(retry_sleep_seconds * attempt)
+            else:
+                break
+
+    return {
+        "records": [],
+        "_metadata": {
+            "source_file": source_file,
+            "chunk_id": chunk_id,
+            "model": model,
+            "error": str(last_error),
         },
-        temperature=0,
-    )
-
-    output_text = response.output_text
-    parsed = json.loads(output_text)
-
-    return parsed
-
-
-def extract_records_from_file(
-    input_path: str | Path,
-    output_path: str | Path,
-    source_hint: str = "",
-    model: str | None = None,
-) -> Path:
-    input_path = Path(input_path)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    text = input_path.read_text(encoding="utf-8", errors="ignore")
-    result = extract_records_from_text(text=text, source_hint=source_hint, model=model)
-
-    output_path.write_text(
-        json.dumps(result, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    return output_path
+    }

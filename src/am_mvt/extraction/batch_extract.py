@@ -1,55 +1,71 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from tqdm import tqdm
-
 from am_mvt.config import get_path
-from am_mvt.extraction.openai_extractor import extract_records_from_file
+from am_mvt.extraction.openai_extractor import DEFAULT_MODEL, extract_records_from_chunk
+
+
+def infer_source_pdf_from_chunk_name(chunk_path: Path) -> str:
+    name = chunk_path.stem
+
+    if "_chunk_" in name:
+        return name.split("_chunk_")[0] + ".pdf"
+
+    return name + ".pdf"
 
 
 def run_batch_extraction(
-    chunk_dir: str | Path | None = None,
-    output_dir: str | Path | None = None,
-    limit: int | None = None,
+    limit: int | None = 20,
     overwrite: bool = False,
+    model: str = DEFAULT_MODEL,
 ) -> list[Path]:
-    if chunk_dir is None:
-        chunk_dir = get_path("data", "interim", "text_chunks")
-    else:
-        chunk_dir = Path(chunk_dir)
+    chunk_dir = get_path("data", "interim", "text_chunks")
+    output_dir = get_path("data", "interim", "llm_outputs")
 
-    if output_dir is None:
-        output_dir = get_path("data", "interim", "llm_outputs")
-    else:
-        output_dir = Path(output_dir)
-
+    chunk_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    if not chunk_dir.exists():
-        return []
 
     chunk_files = sorted(chunk_dir.glob("*.txt"))
 
-    if limit is not None:
+    if limit is not None and limit > 0:
         chunk_files = chunk_files[:limit]
 
-    output_files: list[Path] = []
+    output_paths: list[Path] = []
 
-    for chunk_file in tqdm(chunk_files, desc="Extracting AM records"):
-        output_path = output_dir / f"{chunk_file.stem}.json"
+    if not chunk_files:
+        print("No text chunks found for LLM extraction.")
+        return output_paths
+
+    for index, chunk_path in enumerate(chunk_files, start=1):
+        output_path = output_dir / f"{chunk_path.stem}.json"
 
         if output_path.exists() and not overwrite:
-            output_files.append(output_path)
+            print(f"[{index}/{len(chunk_files)}] Skipping existing output: {output_path.name}")
+            output_paths.append(output_path)
             continue
 
-        source_hint = chunk_file.stem
-        extracted_path = extract_records_from_file(
-            input_path=chunk_file,
-            output_path=output_path,
-            source_hint=source_hint,
+        print(f"[{index}/{len(chunk_files)}] Extracting: {chunk_path.name}")
+
+        chunk_text = chunk_path.read_text(encoding="utf-8", errors="ignore")
+        source_pdf = infer_source_pdf_from_chunk_name(chunk_path)
+
+        result = extract_records_from_chunk(
+            chunk_text=chunk_text,
+            source_file=source_pdf,
+            chunk_id=chunk_path.stem,
+            model=model,
         )
 
-        output_files.append(extracted_path)
+        output_path.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
-    return output_files
+        output_paths.append(output_path)
+
+        record_count = len(result.get("records", []))
+        print(f"    Records extracted: {record_count}")
+
+    return output_paths

@@ -1,81 +1,123 @@
 from __future__ import annotations
 
 
-AM_EXTRACTION_SCHEMA: dict[str, object] = {
+STRING_FIELDS = [
+    "source_title",
+    "doi",
+    "source_file",
+    "source_sheet",
+    "page_or_section",
+    "alloy",
+    "alloy_family",
+    "am_process",
+    "machine_model",
+    "build_orientation",
+    "test_direction",
+    "scan_strategy",
+    "surface_condition",
+    "heat_treatment",
+    "post_processing",
+    "density_measurement_method",
+    "defect_type",
+    "residual_stress_indicator",
+    "test_type",
+    "runout",
+    "failure_mode",
+    "fracture_origin",
+    "evidence_text",
+]
+
+NUMBER_FIELDS = [
+    "source_year",
+    "laser_power_W",
+    "scan_speed_mm_s",
+    "hatch_spacing_um",
+    "layer_thickness_um",
+    "ved_J_mm3",
+    "layer_rotation_degree",
+    "build_plate_temperature_C",
+    "porosity_percent",
+    "relative_density_percent",
+    "test_temperature_C",
+    "yield_strength_MPa",
+    "uts_MPa",
+    "elongation_percent",
+    "youngs_modulus_GPa",
+    "hardness_HV",
+    "stress_amplitude_MPa",
+    "max_stress_MPa",
+    "strain_amplitude",
+    "delta_K_MPa_sqrt_m",
+    "da_dN_m_per_cycle",
+    "r_ratio",
+    "frequency_Hz",
+    "fatigue_life_cycles",
+    "fatigue_life_h",
+    "confidence",
+]
+
+BOOLEAN_FIELDS = [
+    "needs_human_check",
+]
+
+
+def nullable_string_schema() -> dict:
+    return {
+        "anyOf": [
+            {"type": "string"},
+            {"type": "null"},
+        ]
+    }
+
+
+def nullable_number_schema() -> dict:
+    return {
+        "anyOf": [
+            {"type": "number"},
+            {"type": "null"},
+        ]
+    }
+
+
+def nullable_boolean_schema() -> dict:
+    return {
+        "anyOf": [
+            {"type": "boolean"},
+            {"type": "null"},
+        ]
+    }
+
+
+def make_record_schema() -> dict:
+    properties: dict[str, dict] = {}
+
+    for field in STRING_FIELDS:
+        properties[field] = nullable_string_schema()
+
+    for field in NUMBER_FIELDS:
+        properties[field] = nullable_number_schema()
+
+    for field in BOOLEAN_FIELDS:
+        properties[field] = nullable_boolean_schema()
+
+    required_fields = STRING_FIELDS + NUMBER_FIELDS + BOOLEAN_FIELDS
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required_fields,
+        "additionalProperties": False,
+    }
+
+
+LLM_EXTRACTION_SCHEMA = {
     "type": "object",
-    "additionalProperties": False,
     "properties": {
         "records": {
             "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "source_id": {"type": ["string", "null"]},
-                    "source_name": {"type": ["string", "null"]},
-                    "doi": {"type": ["string", "null"]},
-                    "record_id": {"type": ["string", "null"]},
-                    "alloy": {"type": ["string", "null"]},
-                    "alloy_family": {"type": ["string", "null"]},
-                    "am_process": {"type": ["string", "null"]},
-                    "laser_power_W": {"type": ["number", "null"]},
-                    "scan_speed_mm_s": {"type": ["number", "null"]},
-                    "hatch_spacing_um": {"type": ["number", "null"]},
-                    "layer_thickness_um": {"type": ["number", "null"]},
-                    "ved_J_mm3": {"type": ["number", "null"]},
-                    "build_orientation": {"type": ["string", "null"]},
-                    "surface_condition": {"type": ["string", "null"]},
-                    "heat_treatment": {"type": ["string", "null"]},
-                    "defect_type": {"type": ["string", "null"]},
-                    "porosity_percent": {"type": ["number", "null"]},
-                    "relative_density_percent": {"type": ["number", "null"]},
-                    "test_type": {"type": ["string", "null"]},
-                    "yield_strength_MPa": {"type": ["number", "null"]},
-                    "uts_MPa": {"type": ["number", "null"]},
-                    "elongation_percent": {"type": ["number", "null"]},
-                    "fatigue_life_cycles": {"type": ["number", "null"]},
-                    "stress_amplitude_MPa": {"type": ["number", "null"]},
-                    "r_ratio": {"type": ["number", "null"]},
-                    "runout": {"type": ["boolean", "null"]},
-                    "failure_mode": {"type": ["string", "null"]},
-                    "evidence_text": {"type": ["string", "null"]},
-                    "extraction_confidence": {"type": "number"},
-                    "needs_human_check": {"type": "boolean"},
-                },
-                "required": [
-                    "source_id",
-                    "source_name",
-                    "doi",
-                    "record_id",
-                    "alloy",
-                    "alloy_family",
-                    "am_process",
-                    "laser_power_W",
-                    "scan_speed_mm_s",
-                    "hatch_spacing_um",
-                    "layer_thickness_um",
-                    "ved_J_mm3",
-                    "build_orientation",
-                    "surface_condition",
-                    "heat_treatment",
-                    "defect_type",
-                    "porosity_percent",
-                    "relative_density_percent",
-                    "test_type",
-                    "yield_strength_MPa",
-                    "uts_MPa",
-                    "elongation_percent",
-                    "fatigue_life_cycles",
-                    "stress_amplitude_MPa",
-                    "r_ratio",
-                    "runout",
-                    "failure_mode",
-                    "evidence_text",
-                    "extraction_confidence",
-                    "needs_human_check",
-                ],
-            },
+            "items": make_record_schema(),
         }
     },
     "required": ["records"],
+    "additionalProperties": False,
 }
