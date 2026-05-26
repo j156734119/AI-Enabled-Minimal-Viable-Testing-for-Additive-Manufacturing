@@ -48,7 +48,7 @@ Defect type
 Residual stress indicators
 Process signatures
 
-Example output variables:
+## Example output variables:
 
 - Ultimate tensile strength
 - Yield strength
@@ -113,8 +113,8 @@ Then fill in the real values in .env.
 Run the project step by step:
 
 ```
-python scripts/01_search_sources.py
-python scripts/02_download_open_files.py
+python scripts/01_search_sources.py          # optional: record candidate sources
+python scripts/02_download_open_files.py     # optional: download directly accessible open files
 python scripts/03_parse_documents.py
 python scripts/04_extract_with_llm.py
 python scripts/05_build_dataset.py
