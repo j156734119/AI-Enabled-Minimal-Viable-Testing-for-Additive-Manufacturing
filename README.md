@@ -25,14 +25,15 @@ The project does not involve:
 
 ## Core Research Logic
 
-The project studies relationships between:
+The project studies relationships between material, process, defect, surface, post-processing and testing variables, and numerical mechanical outcomes.
+
+The main logic is:
 
 ```text
-process / material / defect variables
-        ↓
-mechanical outcomes
-        ↓
-reduced but representative testing strategy
+material / process / defect / testing variables
+→ mechanical outcomes
+→ feature importance and sensitivity analysis
+→ reduced but representative testing strategy
 ```
 
 ## Example input variables:
@@ -49,10 +50,13 @@ Process signatures
 
 Example output variables:
 
-Tensile properties
-Fatigue properties
-Mechanical outcomes
-Failure modes
+- Ultimate tensile strength
+- Yield strength
+- Elongation
+- Fatigue life in cycles
+- Log-transformed fatigue life
+
+Failure mode information may be considered as a possible future extension, but it is not implemented as a main modelling output at this stage.
 
 ## Repository Structure
 ```text
@@ -114,12 +118,13 @@ python scripts/02_download_open_files.py
 python scripts/03_parse_documents.py
 python scripts/04_extract_with_llm.py
 python scripts/05_build_dataset.py
+python scripts/05b_merge_llm_into_master.py
 python scripts/06_train_models.py
 python scripts/07_explain_models.py
 python scripts/08_generate_testing_matrix.py
 ```
 
-## mportant Notes
+## Important Notes
 
 Raw PDFs, confidential files, API keys, and large intermediate files should not be committed to GitHub.
 
@@ -128,16 +133,3 @@ The OpenAI API is used only as an assistive NLP tool for candidate information e
 ## Licence
 
 This repository is released under the MIT License for the code written by the author. External datasets and papers remain under their original licences.
-
-
-src/am_mvt/__init__.py`
-
-
-Python package for the dissertation project:
-
-```
-AI-Enabled Minimal Viable Testing for Additive Manufacturing.
-
-
-__version__ = "0.1.0"
-```
