@@ -1,0 +1,191 @@
+﻿1  check meeting one doc
+ 相关文献
+第一梯队：既高含金量，又最贴题
+ Additive Manufacturing 
+ Journal of Materials Processing Technology 
+ Journal of Manufacturing Processes 
+第二梯队：高质量补充
+* Virtual and Physical Prototyping 
+* Progress in Additive Manufacturing（相关性高，但分区不稳） 
+第三梯队：可补充阅读
+* Advanced Engineering Materials 
+Current input variables include:
+ Alloy type 
+ Alloy family 
+ AM process 
+ Build orientation 
+ Processing parameters 
+ Laser power 
+ Scan speed 
+ Hatch spacing 
+ Layer thickness 
+ Volumetric energy density 
+ Porosity metrics 
+ Relative density 
+ Defect type 
+ Residual stress indicators 
+ Surface condition 
+ Heat treatment 
+ Post-processing 
+ Fatigue loading conditions, where available 
+Output
+The output variables describe the measured mechanical performance.
+Current output variables include:
+* Ultimate tensile strength 
+* Yield strength 
+* Elongation 
+* Fatigue life in cycles 
+* Log-transformed fatigue life 
+At this stage, the two main modelling tasks are:
+* Model 1: Static tensile property prediction 
+* Model 2: S-N fatigue life prediction
+###
+* mechanical outcomes 
+* failure modes
+###
+
+2 下一步
+改readme运行指导
+
+学习additive manufacture专有词语b站和互相之间的关系
+
+尽可能用model能反应出来其中的关系
+
+修改代码只保留 master modelling dataset 删除modelling dataset
+添加已抓取的pdf的名单来方便项目的复现，或者是把LLM提取的csv数据上传到github并在csv中表明出处
+增加pdf llm提取数据
+增加模型并调参
+完成最小测试
+优先级要改什么为什么1实现 07_explain_models.py支撑 feature importance / SHAP / sensitivity2实现 08_generate_testing_matrix.py这是你的题目核心贡献3加 grouped CV提高结果可信度4增加 tests避免数据清洗和 split 错误5增加 data source audit table满足 ethics、citation、source reliability6改进 README 的 typomportant Notes 少了 I7增加 example output让导师/marker 一眼看懂代码能产生什么输入：
+1. feature importance
+2. model performance
+3. data coverage by alloy/process/orientation/surface condition
+4. risk-related variables such as porosity, defect_type, fatigue loading
+
+输出：
+reduced_testing_matrix.csv
+
+建议输出字段：
+
+priority
+alloy_family
+am_process
+build_orientation
+surface_condition
+test_type
+target_property
+recommended_test_condition
+reason
+supporting_features
+model_evidence
+coverage_risk
+confidence_level
+
+你的 ethics summary 和 methodology 里写到，最后会用 feature importance 和 sensitivity analysis 找出最能预测 failure-relevant behaviour 的变量，从而支持 reduced testing strategy。
+但是目前 07_explain_models.py 还没有真正做 SHAP 或 partial dependence。
+
+最低限度你需要实现：
+
+读取已训练的 joblib model；
+读取对应 modelling view；
+计算 permutation importance 或 SHAP；
+输出 top features；
+生成图表；
+把 feature importance 和 testing matrix 连接起来。
+
+优先级上，我建议先做 permutation importance，因为它比 SHAP 更容易稳定运行，也更容易解释。之后再补 SHAP 作为增强。
+
+所以你还需要补：
+
+1. GroupKFold 或 repeated group split
+2. baseline comparison
+3. error analysis by alloy_family / am_process / target
+4. prediction uncertainty or confidence bands
+5. data coverage summary
+
+尤其是第 5 点很关键。你的项目不是单纯预测 tensile strength 或 fatigue life，而是要判断哪些 test condition 具有代表性。所以你必须回答：
+
+模型在哪些 alloy/process/orientation 上有足够数据支持？
+哪些区域数据不足，因此不能自信地减少测试？
+GJG.3 - AI -Enabled Minimal Viable Testing for Additive ManufacturingIs at Capacity
+Project Capacity: 0 IR: 0 APR: 0
+
+Metal additive manufacturing (AM) enables the production of complex, lightweight, and highly customised metal components, offering advantages such as design freedom, reduced waste, and rapid prototyping across aerospace, automotive, and biomedical sectors. Its layer-by-layer fabrication, however, introduces variability in microstructure, defects, and mechanical performance, making rigorous mechanical testing essential to ensure reliability and qualification.
+Reviews emphasise that mechanical tests such as tensile, fatigue, hardness, impact, and others, are central to understanding how process parameters and defects affect part performance in metal AM. Metal AM processes also face challenges related to microstructural evolution, anisotropy, and process-property relationships, further reinforcing the need for extensive characterisation.
+Because qualification campaigns can require thousands of tests, there is increasing demand for "just good enough" testing strategies that reduce cost while preserving confidence. Emerging AI-driven approaches offer a promising pathway: by mining existing research outputs, published mechanical data, and documented failure modes, AI systems can identify correlations between process signatures, microstructural features, and mechanical reliability. This can help predict failure-critical conditions, streamline testing matrices, and guide the selection of minimal, but still representative, mechanical tests. Such data-driven methods aim to accelerate qualification while maintaining safety and performance assurance in metal AM.
+This project will develop an AI-driven methodology for reducing metal AM mechanical testing:
+ Data Acquisition & Normalisation: Use automated text-mining and natural-language processing (NLP) to scrape datasets from research papers, extracting structured variables such as build orientation, defect type, surface condition, and tensile or fatigue results.
+ Feature Engineering: Incorporate metadata-processing parameters, alloy type, porosity metrics, and residual stress indicators-identified as key contributors to AM property variability.
+ Model Development: Apply statistical learning and machine-learning models to correlate process signatures with mechanical outcomes and failure modes.
+ Test Matrix Optimization: Use model-derived sensitivity analyses to identify parameters most predictive of failure, enabling the construction of minimal "just good enough" test suites.
+ Validation (if time permits): Compare AI recommendations against experimentally validated datasets to ensure reliability.
+ 
+
+Suggested Type of Project
+empirical
+Suggested Methodological Approach
+quantitative
+Data is provided by
+student
+Supervisor
+Gregory Gibbons
+
+AY 25/26 monitoring point for students to meet in person* with their supervisor/coaches are noted below.
+Please note, these meetings are not in addition to the 6 supervisory meetings and can be synchronised accordingly:
+ Monitoring point 1 (1 July - 31 July 2026) 
+ Monitoring Point 2 (1 Aug - 31 Aug 2026) 
+* let the Student Office know via wmg-ftmasters@warwick.ac.uk if you cannot meet in person and need to meet online.
+
+论文结构和内容建议
+Empirical Project
+ Cover pages 
+ Introduction (1500 words, 10%) 
+ Literature review (4500 words, 20%) 
+ Methodology (2250 words, 15%) 
+ Findings and analysis 
+ Discussion 
+o Findings and analysis + Discussion 合计：6000 words, 40% 
+ Conclusion (750 words, 5%) 
+ References 
+ Appendices
+
+
+
+
+2. General Guidance：学术写作总体要求
+
+这一部分强调 dissertation 不只是看研究内容，也看学术表达和呈现质量。所有图、表、公式、图片都不能只是放在那里，必须在正文中被引用、解释，并且要按顺序编号、配有清楚标题；章节标题也不能太泛，要根据自己的项目内容具体命名。同时，所有文献引用和二手数据引用都必须规范、一致，避免 academic misconduct。对你的项目来说，这意味着每一个数据集、每一篇论文来源、每一个图表和模型结果都要有清楚说明和引用。
+
+3. Introduction Chapter：引言章节
+
+引言的核心任务是建立整篇论文的"研究起点"。它要先从大背景讲起，再逐步缩小到具体问题和知识空白，也就是漏斗结构：先说明金属增材制造为什么重要，再说明机械测试为什么成本高、周期长，接着指出现有研究中 AI/公开数据尚未充分转化为 reduced but representative testing framework 的 gap。之后要明确 research aim、research question、4-5 个 SMART objectives，以及 expected outcomes。对你来说，引言必须把"公开 AM 数据 + AI 方法 + 减少冗余机械测试 + 保持可靠性评估信心"这条主线讲清楚。
+
+4. Literature Review：文献综述
+
+文献综述不是简单堆论文，而是要批判性评价和综合已有研究。它要解释你的 research question 为什么成立，现有研究已经解决了什么，还没有解决什么，并用可靠文献支撑你的研究 gap。对你的项目来说，文献综述应该围绕几个主题展开：金属 AM 机械性能变化来源、process-defect-property relationships、AM tensile/fatigue testing、公开数据集与文献数据提取、AI/ML 在 AM 性能预测中的应用，以及现有研究为什么还没有充分形成 minimal viable testing strategy。重点不是"某篇论文说了什么"，而是"这些文献之间如何共同证明你的研究必要性"。
+
+5. Methodology：方法论
+
+方法论章节要说明你如何开展研究，并且证明你的方法适合回答 research question。它不仅要写你用了什么方法，还要解释为什么这样做、有什么限制、如何控制风险、如何保证可复现性。对你的项目来说，这一章应该重点写：为什么采用 publicly available secondary data，如何搜索和筛选论文/数据集，如何提取 alloy type、build orientation、processing parameters、defect type、porosity、residual stress、tensile/fatigue results 等变量，如何清洗和标准化数据，如何使用统计分析和机器学习模型，以及如何用 feature importance / sensitivity analysis 支持 reduced testing framework。同时还要说明伦理审批、数据存储、引用规范和公开数据使用边界。
+
+6. Results and Analysis：结果与分析
+
+这一章要区分两个问题：Results 回答"What did you find?"，Analysis 回答"What do the findings mean?"。也就是说，先展示你的数据和模型发现，再解释这些发现的意义、可信度和与文献的关系。对你的项目来说，Results 可以展示数据集构成、变量分布、缺失情况、模型表现、特征重要性、敏感性分析和关键测试条件；Analysis 则要解释哪些变量最影响机械性能或 failure modes，这些发现是否符合已有 AM 文献，哪些结果支持减少测试，哪些结果因为数据质量或样本限制需要谨慎解释。这一章不能只贴结果图，而要把结果转化为研究问题的答案。
+
+7. Discussion：讨论
+
+Discussion 是从"结果意义"进一步走向"贡献"的章节。它要说明你的研究如何对工业实践有价值、如何填补文献 gap、有哪些限制、未来研究可以怎样继续。对你的项目来说，Discussion 的重点应该是把模型和数据分析结果转化成一个 evidence-based reduced mechanical testing framework，也就是说明哪些测试条件最有信息量，哪些变量应该优先关注，什么情况下可以减少测试，什么情况下不能轻易减少测试，以及这些建议对 AM engineers、quality assurance teams、qualification teams 有什么实际意义。同时，你还要讨论公开二手数据的局限，例如数据不完整、来源异质、材料和工艺条件不统一，并提出未来如何通过更多实验数据或工业验证改进。
+
+8. Conclusion：结论
+
+结论章节的核心是证明你已经完成 research objectives，并回答 research question。它不应该加入新数据、新图表或新观点，而是回到开头设定的目标，逐个说明每个 objective 是如何实现的，以及这些成果如何共同支持你的 research aim。对你的项目来说，结论可以按 objectives 组织：你如何识别和筛选公开 AM 数据，如何构建结构化变量，如何进行统计/ML 分析，如何识别关键变量和测试条件，最后如何提出 reduced but representative testing strategy。结论通常少于全文 10%，所以要简洁、有总结性，而不是重新写一遍 Results 和 Discussion。
+
+9. Submission：提交前检查
+
+提交部分是最终质量控制，要求你像 marker 一样检查自己的 dissertation。你需要确认研究问题、目标、方法、结果、讨论、贡献和限制都与评分标准对应；同时还要检查格式、目录、页码、图表编号、交叉引用、reference list、appendices、ethics approval evidence、ethics training certificates/badges、Turnitin similarity report 等。对你的项目尤其重要的是：你使用的是公开二手数据，所以必须保证数据来源合法、引用完整、处理过程透明，并且在 appendix 中放入 ethics approval/waiver、ethics form 和相关 training evidence。最后一定要确认正文引用和 reference list 完全一致，避免因为 references 问题影响成绩。
+
+一句话总括：
+
+2 是写作规范，3 是提出问题，4 是证明 gap，5 是说明怎么做，6 是展示和解释发现，7 是形成贡献，8 是证明目标完成，9 是提交前质量检查。
+
+

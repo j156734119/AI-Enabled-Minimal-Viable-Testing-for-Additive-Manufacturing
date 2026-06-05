@@ -5,9 +5,17 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
-from sklearn.linear_model import Ridge
+from sklearn.dummy import DummyRegressor
+from sklearn.ensemble import (
+    ExtraTreesRegressor,
+    GradientBoostingRegressor,
+    HistGradientBoostingRegressor,
+    RandomForestRegressor,
+)
+from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.pipeline import Pipeline
+from sklearn.svm import SVR
+from xgboost import XGBRegressor
 
 from am_mvt.config import get_path
 from am_mvt.modelling.build_views import save_modelling_views
@@ -15,21 +23,115 @@ from am_mvt.modelling.evaluate import evaluate_regression
 from am_mvt.modelling.make_dataset import MODEL_CONFIGS, prepare_regression_data
 
 
+MODEL_RATIONALE = {
+    "dummy_mean_baseline": {
+        "family": "baseline",
+        "rationale": "Mean baseline for checking whether learned models add signal.",
+    },
+    "ridge": {
+        "family": "regularised_linear",
+        "rationale": "Stable linear baseline for small, noisy tabular AM data.",
+    },
+    "elastic_net": {
+        "family": "regularised_linear",
+        "rationale": "Sparse/regularised linear model for correlated process variables.",
+    },
+    "svr_rbf_light": {
+        "family": "kernel",
+        "rationale": "Nonlinear kernel baseline for small to medium tabular datasets.",
+    },
+    "random_forest_light": {
+        "family": "bagging_tree_ensemble",
+        "rationale": "Robust tree ensemble for nonlinear mixed-feature interactions.",
+    },
+    "extra_trees_light": {
+        "family": "bagging_tree_ensemble",
+        "rationale": "High-variance randomized tree ensemble for robustness comparison.",
+    },
+    "gradient_boosting_light": {
+        "family": "boosting_tree_ensemble",
+        "rationale": "Classic boosting baseline for nonlinear process-property trends.",
+    },
+    "hist_gradient_boosting": {
+        "family": "boosting_tree_ensemble",
+        "rationale": "Efficient sklearn boosting model for tabular regression.",
+    },
+    "xgboost_light": {
+        "family": "boosting_tree_ensemble",
+        "rationale": "Strong gradient-boosted tree baseline for structured tabular data.",
+    },
+}
+
+
+def get_model_metadata(model_name: str) -> dict[str, str]:
+    return MODEL_RATIONALE.get(
+        model_name,
+        {
+            "family": "unknown",
+            "rationale": "No rationale recorded for this model.",
+        },
+    )
+
+
 def get_models() -> dict[str, object]:
+    """Return controlled candidate regressors for AM tabular data.
+
+    The set intentionally mixes simple baselines, regularised linear models,
+    kernel regression, bagging ensembles, and boosting ensembles so the project
+    can compare whether nonlinear models add value beyond conservative
+    baselines before any expensive hyperparameter search.
+    """
     return {
+        "dummy_mean_baseline": DummyRegressor(strategy="mean"),
         "ridge": Ridge(alpha=1.0),
+        "elastic_net": ElasticNet(
+            alpha=0.01,
+            l1_ratio=0.25,
+            max_iter=10000,
+            random_state=42,
+        ),
+        "svr_rbf_light": SVR(
+            kernel="rbf",
+            C=10.0,
+            epsilon=0.1,
+            gamma="scale",
+        ),
         "random_forest_light": RandomForestRegressor(
-            n_estimators=80,
+            n_estimators=120,
             max_depth=14,
             min_samples_leaf=2,
             random_state=42,
             n_jobs=-1,
+        ),
+        "extra_trees_light": ExtraTreesRegressor(
+            n_estimators=160,
+            max_depth=14,
+            min_samples_leaf=2,
+            random_state=42,
+            n_jobs=-1,
+        ),
+        "gradient_boosting_light": GradientBoostingRegressor(
+            n_estimators=120,
+            learning_rate=0.05,
+            max_depth=3,
+            min_samples_leaf=2,
+            random_state=42,
         ),
         "hist_gradient_boosting": HistGradientBoostingRegressor(
             max_iter=150,
             learning_rate=0.05,
             max_leaf_nodes=31,
             random_state=42,
+        ),
+        "xgboost_light": XGBRegressor(
+            n_estimators=160,
+            max_depth=4,
+            learning_rate=0.05,
+            subsample=0.85,
+            colsample_bytree=0.85,
+            objective="reg:squarederror",
+            random_state=42,
+            n_jobs=-1,
         ),
     }
 
@@ -138,6 +240,7 @@ def train_one_target(
 
         predictions = pipeline.predict(X_test)
         metrics = evaluate_regression(y_test, predictions)
+        model_metadata = get_model_metadata(model_name)
 
         model_path = models_dir / f"{model_key}_{target}_{model_name}.joblib"
         joblib.dump(pipeline, model_path)
@@ -147,6 +250,8 @@ def train_one_target(
                 "model_key": model_key,
                 "target": target,
                 "model": model_name,
+                "model_family": model_metadata["family"],
+                "model_rationale": model_metadata["rationale"],
                 "n_rows_used": prepared["n_rows"],
                 "n_groups": prepared["n_groups"],
                 "n_train": len(X_train),
