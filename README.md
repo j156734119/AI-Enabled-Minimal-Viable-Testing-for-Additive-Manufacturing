@@ -132,6 +132,7 @@ python scripts/01_search_sources.py          # record core candidate sources, no
 python scripts/02_download_open_files.py     # prepare folders and provenance audit tables
 python scripts/02b_prepare_pdfs.py            # preview PDF title normalisation
 python scripts/02b_prepare_pdfs.py --apply    # move renamed PDFs into data/raw/pdfs
+python scripts/02c_export_literature_manifest.py  # export GitHub-safe article list
 python scripts/03_parse_documents.py
 python scripts/04_extract_with_llm.py
 python scripts/05_build_dataset.py
@@ -171,6 +172,22 @@ outputs/tables/pdf_title_normalisation_plan.csv
 
 Only the `--apply` run moves renamed PDFs from the inbox into
 `data/raw/pdfs/`, where Step 03 will parse them.
+
+After the formal PDF folder is ready, export the reproducibility manifest:
+
+```bash
+python scripts/02c_export_literature_manifest.py
+```
+
+This scans every PDF directly under `data/raw/pdfs/` and writes:
+
+```text
+docs/literature_manifest.csv
+```
+
+The manifest lists article title, journal, year, DOI, source links, local
+standardised filename, verification status, and parsing readiness. It contains
+metadata only and does not include or upload the PDF files.
 
 For the current early milestone, stop after:
 
