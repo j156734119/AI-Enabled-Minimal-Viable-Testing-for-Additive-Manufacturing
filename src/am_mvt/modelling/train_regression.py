@@ -5,6 +5,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import (
     ExtraTreesRegressor,
@@ -12,7 +13,7 @@ from sklearn.ensemble import (
     HistGradientBoostingRegressor,
     RandomForestRegressor,
 )
-from sklearn.linear_model import ElasticNet, Ridge
+from sklearn.linear_model import ElasticNet, Ridge, SGDRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVR
 from xgboost import XGBRegressor
@@ -35,6 +36,12 @@ MODEL_RATIONALE = {
     "elastic_net": {
         "family": "regularised_linear",
         "rationale": "Sparse/regularised linear model for correlated process variables.",
+    },
+    "sgd_l2": {
+        "family": "regularised_linear",
+        "rationale": (
+            "Iterative L2-regularised linear baseline for larger tabular views."
+        ),
     },
     "svr_rbf_light": {
         "family": "kernel",
@@ -83,11 +90,25 @@ def get_models() -> dict[str, object]:
     """
     return {
         "dummy_mean_baseline": DummyRegressor(strategy="mean"),
-        "ridge": Ridge(alpha=1.0),
+        "ridge": Ridge(
+            alpha=1.0,
+            solver="sag",
+            max_iter=3000,
+            tol=1e-3,
+            random_state=42,
+        ),
         "elastic_net": ElasticNet(
             alpha=0.01,
             l1_ratio=0.25,
             max_iter=10000,
+            random_state=42,
+        ),
+        "sgd_l2": SGDRegressor(
+            loss="squared_error",
+            penalty="l2",
+            alpha=0.0001,
+            max_iter=3000,
+            tol=1e-3,
             random_state=42,
         ),
         "svr_rbf_light": SVR(
@@ -101,14 +122,14 @@ def get_models() -> dict[str, object]:
             max_depth=14,
             min_samples_leaf=2,
             random_state=42,
-            n_jobs=-1,
+            n_jobs=1,
         ),
         "extra_trees_light": ExtraTreesRegressor(
             n_estimators=160,
             max_depth=14,
             min_samples_leaf=2,
             random_state=42,
-            n_jobs=-1,
+            n_jobs=1,
         ),
         "gradient_boosting_light": GradientBoostingRegressor(
             n_estimators=120,
@@ -131,7 +152,7 @@ def get_models() -> dict[str, object]:
             colsample_bytree=0.85,
             objective="reg:squarederror",
             random_state=42,
-            n_jobs=-1,
+            n_jobs=1,
         ),
     }
 
@@ -201,7 +222,7 @@ def train_one_target(
     model_key: str,
     target: str,
     dataset_path: str | Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     prepared = prepare_regression_data(
         model_key=model_key,
         target=target,
@@ -222,57 +243,93 @@ def train_one_target(
 
     metric_rows = []
     importance_frames = []
+    error_rows = []
 
     for model_name, model in models.items():
-        pipeline = Pipeline(
-            steps=[
-                ("preprocessor", preprocessor),
-                ("model", model),
-            ]
-        )
+        print(f"  Training {model_key} / {target} / {model_name}...")
 
-        pipeline = fit_pipeline(
-            pipeline=pipeline,
-            X_train=X_train,
-            y_train=y_train,
-            sample_weight=w_train,
-        )
+        if prepared["n_rows"] > 5000 and model_name in {
+            "ridge",
+            "elastic_net",
+            "svr_rbf_light",
+        }:
+            reason = (
+                "Skipped for large view (>5000 rows) to avoid unstable or "
+                "excessive dense linear/kernel fitting; use sgd_l2 as the "
+                "scalable regularised linear baseline."
+            )
+            error_rows.append(
+                {
+                    "model_key": model_key,
+                    "target": target,
+                    "model": model_name,
+                    "error": reason,
+                }
+            )
+            print(f"    {reason}")
+            continue
 
-        predictions = pipeline.predict(X_test)
-        metrics = evaluate_regression(y_test, predictions)
-        model_metadata = get_model_metadata(model_name)
+        try:
+            pipeline = Pipeline(
+                steps=[
+                    ("preprocessor", clone(preprocessor)),
+                    ("model", model),
+                ]
+            )
 
-        model_path = models_dir / f"{model_key}_{target}_{model_name}.joblib"
-        joblib.dump(pipeline, model_path)
+            pipeline = fit_pipeline(
+                pipeline=pipeline,
+                X_train=X_train,
+                y_train=y_train,
+                sample_weight=w_train,
+            )
 
-        metric_rows.append(
-            {
-                "model_key": model_key,
-                "target": target,
-                "model": model_name,
-                "model_family": model_metadata["family"],
-                "model_rationale": model_metadata["rationale"],
-                "n_rows_used": prepared["n_rows"],
-                "n_groups": prepared["n_groups"],
-                "n_train": len(X_train),
-                "n_test": len(X_test),
-                "split_method": prepared["split_method"],
-                "mae": metrics["mae"],
-                "rmse": metrics["rmse"],
-                "r2": metrics["r2"],
-                "model_path": str(model_path),
-            }
-        )
+            predictions = pipeline.predict(X_test)
+            metrics = evaluate_regression(y_test, predictions)
+            model_metadata = get_model_metadata(model_name)
 
-        importance_df = extract_feature_importance(
-            pipeline=pipeline,
-            model_key=model_key,
-            target=target,
-            model_name=model_name,
-        )
+            model_path = models_dir / f"{model_key}_{target}_{model_name}.joblib"
+            joblib.dump(pipeline, model_path)
 
-        if not importance_df.empty:
-            importance_frames.append(importance_df)
+            metric_rows.append(
+                {
+                    "model_key": model_key,
+                    "target": target,
+                    "model": model_name,
+                    "model_family": model_metadata["family"],
+                    "model_rationale": model_metadata["rationale"],
+                    "n_rows_used": prepared["n_rows"],
+                    "n_groups": prepared["n_groups"],
+                    "n_train": len(X_train),
+                    "n_test": len(X_test),
+                    "split_method": prepared["split_method"],
+                    "mae": metrics["mae"],
+                    "rmse": metrics["rmse"],
+                    "r2": metrics["r2"],
+                    "model_path": model_path.relative_to(get_path()).as_posix(),
+                }
+            )
+
+            importance_df = extract_feature_importance(
+                pipeline=pipeline,
+                model_key=model_key,
+                target=target,
+                model_name=model_name,
+            )
+
+            if not importance_df.empty:
+                importance_frames.append(importance_df)
+
+        except Exception as exc:
+            error_rows.append(
+                {
+                    "model_key": model_key,
+                    "target": target,
+                    "model": model_name,
+                    "error": str(exc),
+                }
+            )
+            print(f"    Skipped after error: {exc}")
 
     metrics_df = pd.DataFrame(metric_rows)
 
@@ -283,7 +340,12 @@ def train_one_target(
             columns=["model_key", "target", "model", "feature", "importance"]
         )
 
-    return metrics_df, importance_df
+    errors_df = pd.DataFrame(
+        error_rows,
+        columns=["model_key", "target", "model", "error"],
+    )
+
+    return metrics_df, importance_df, errors_df
 
 
 def train_project_models(
@@ -304,7 +366,7 @@ def train_project_models(
     for model_key, targets in training_plan.items():
         for target in targets:
             try:
-                metrics_df, importance_df = train_one_target(
+                metrics_df, importance_df, model_errors_df = train_one_target(
                     model_key=model_key,
                     target=target,
                 )
@@ -314,11 +376,15 @@ def train_project_models(
                 if not importance_df.empty:
                     importance_frames.append(importance_df)
 
+                if not model_errors_df.empty:
+                    error_rows.extend(model_errors_df.to_dict(orient="records"))
+
             except Exception as exc:
                 error_rows.append(
                     {
                         "model_key": model_key,
                         "target": target,
+                        "model": "",
                         "error": str(exc),
                     }
                 )
@@ -337,7 +403,7 @@ def train_project_models(
 
     errors_df = pd.DataFrame(
         error_rows,
-        columns=["model_key", "target", "error"],
+        columns=["model_key", "target", "model", "error"],
     )
 
     tables_dir = get_path("outputs", "tables")

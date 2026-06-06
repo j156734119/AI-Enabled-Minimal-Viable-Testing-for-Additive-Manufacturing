@@ -1,6 +1,6 @@
 # AI-Enabled Minimal Viable Testing for Additive Manufacturing
 
-This repository contains the Python framework for Fangxing Lin's MSc dissertation project:
+This repository contains a research framework for:
 
 **AI-Enabled Minimal Viable Testing for Additive Manufacturing**
 

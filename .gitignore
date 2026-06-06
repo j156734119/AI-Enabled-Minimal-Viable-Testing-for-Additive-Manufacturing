@@ -54,6 +54,7 @@ outputs/models/*
 outputs/figures/*
 outputs/tables/*
 outputs/reports/*
+outputs/*_extracted.txt
 
 !outputs/models/.gitkeep
 !outputs/figures/.gitkeep

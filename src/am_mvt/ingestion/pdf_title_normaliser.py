@@ -471,7 +471,7 @@ def prepare_pdf_normalisation(
                     "doi_found": evidence.doi,
                     **match,
                     "normalised_filename": target_path.name,
-                    "normalised_path": str(target_path),
+                    "normalised_path": target_path.relative_to(get_path()).as_posix(),
                     "action": action,
                     "error": "",
                 }

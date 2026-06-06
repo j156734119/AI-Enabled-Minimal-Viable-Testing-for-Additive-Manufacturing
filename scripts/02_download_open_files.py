@@ -165,7 +165,7 @@ def build_pdf_inventory(pdf_dir: Path) -> pd.DataFrame:
         rows.append(
             {
                 "local_pdf_filename": pdf_path.name,
-                "local_pdf_path": str(pdf_path),
+                "local_pdf_path": pdf_path.relative_to(get_path()).as_posix(),
                 "file_size_bytes": pdf_path.stat().st_size,
                 "download_status": "manual_file_present",
                 "notes": "User-provided local PDF; verify lawful access before extraction.",
