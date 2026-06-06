@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum candidate papers requested from each journal per search round.",
     )
     parser.add_argument(
+        "--min-per-journal",
+        type=int,
+        default=4,
+        help="Minimum candidates reserved for each approved journal when available.",
+    )
+    parser.add_argument(
         "--search-rounds",
         type=int,
         default=3,
@@ -58,6 +64,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SCREENING_MODEL,
         help="OpenAI model used for web source screening.",
     )
+    parser.add_argument(
+        "--no-crossref",
+        action="store_true",
+        help="Disable the public Crossref metadata fallback.",
+    )
 
     return parser.parse_args()
 
@@ -80,10 +91,12 @@ def main() -> None:
     screened_df, output_paths = run_llm_web_source_screening(
         target_count=args.target_count,
         per_journal_limit=args.per_journal_limit,
+        min_per_journal=args.min_per_journal,
         year_from=args.year_from,
         year_to=args.year_to,
         model=args.model,
         search_rounds=args.search_rounds,
+        use_crossref=not args.no_crossref,
     )
 
     print("\nLLM web source screening complete.")

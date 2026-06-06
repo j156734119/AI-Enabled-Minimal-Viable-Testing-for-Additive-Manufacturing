@@ -71,7 +71,9 @@ Model 3: elongation / yield response prediction
 Model 4: Young's / elastic modulus prediction
 ```
 
-Each task is trained with controlled tabular-regression baselines so the project can compare simple mean and linear baselines against nonlinear tree and kernel models before later interpretation work.
+Each task uses a compact comparison set: Dummy mean baseline, Ridge, Random
+Forest, and XGBoost. This keeps the work focused on the four dissertation
+prediction tasks rather than turning it into a broad model competition.
 
 ## Repository Structure
 ```text
@@ -134,21 +136,23 @@ python scripts/02b_prepare_pdfs.py            # preview PDF title normalisation
 python scripts/02b_prepare_pdfs.py --apply    # move renamed PDFs into data/raw/pdfs
 python scripts/02c_export_literature_manifest.py  # export GitHub-safe article list
 python scripts/03_parse_documents.py
-python scripts/04_extract_with_llm.py
+python scripts/04_extract_with_llm.py --limit 0  # existing JSON outputs are skipped
 python scripts/05_build_dataset.py
 python scripts/05b_merge_llm_into_master.py
 python scripts/06_train_models.py
-python scripts/07_explain_models.py
-python scripts/08_generate_testing_matrix.py
 ```
 
 Optional OpenAI web-assisted source screening can be run from Step 01:
 
 ```
-python scripts/01_search_sources.py --llm-web-search --target-count 50 --per-journal-limit 8 --search-rounds 3
+python scripts/01_search_sources.py --llm-web-search --target-count 50 --per-journal-limit 8 --min-per-journal 4 --search-rounds 3
 ```
 
-This produces candidate source tables for manual PDF collection. It does not automate publisher downloads, publisher logins, cookies, VPNs, or institutional access.
+This combines OpenAI web-assisted screening with public Crossref metadata,
+searches every approved journal before ranking, and reserves journal coverage
+when suitable candidates are available. It produces candidate source tables
+for manual PDF collection. It does not automate publisher downloads, publisher
+logins, cookies, VPNs, or institutional access.
 
 Place newly downloaded PDFs in:
 

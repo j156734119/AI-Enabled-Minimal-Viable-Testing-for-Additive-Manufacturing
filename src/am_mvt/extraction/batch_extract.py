@@ -11,9 +11,10 @@ def infer_source_pdf_from_chunk_name(chunk_path: Path) -> str:
     name = chunk_path.stem
 
     if "_chunk_" in name:
-        return name.split("_chunk_")[0] + ".pdf"
+        source_name = name.split("_chunk_")[0]
+        return source_name if source_name.lower().endswith(".pdf") else source_name + ".pdf"
 
-    return name + ".pdf"
+    return name if name.lower().endswith(".pdf") else name + ".pdf"
 
 
 def run_batch_extraction(

@@ -168,6 +168,15 @@ def append_llm_records_to_master(
     llm_df = ensure_required_columns(read_csv_if_exists(llm_csv_path))
     llm_df = remove_empty_llm_rows(llm_df)
 
+    if "extraction_method" in master_df.columns:
+        is_previous_llm_record = (
+            master_df["extraction_method"]
+            .astype("string")
+            .str.lower()
+            .eq("llm_extraction")
+        )
+        master_df = master_df.loc[~is_previous_llm_record].copy()
+
     if make_backup and output_path.exists():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = output_path.with_name(f"{output_path.stem}_backup_{timestamp}.csv")
@@ -193,15 +202,21 @@ def append_llm_records_to_master(
         encoding="utf-8-sig",
     )
 
-    if "source_id" in combined_df.columns:
-        llm_source_rows_after = (
-            combined_df["source_id"]
+    if "extraction_method" in combined_df.columns:
+        llm_mask = (
+            combined_df["extraction_method"]
             .astype("string")
-            .eq("llm_literature_extraction")
-            .sum()
+            .str.lower()
+            .eq("llm_extraction")
         )
+        llm_source_rows_after = int(llm_mask.sum())
+        llm_source_count_after = combined_df.loc[
+            llm_mask,
+            "source_id",
+        ].nunique(dropna=True)
     else:
         llm_source_rows_after = 0
+        llm_source_count_after = 0
 
     summary = pd.DataFrame(
         [
@@ -210,6 +225,7 @@ def append_llm_records_to_master(
                 "llm_rows_added": len(llm_df),
                 "master_rows_after": len(combined_df),
                 "llm_source_rows_after": llm_source_rows_after,
+                "llm_source_count_after": llm_source_count_after,
                 "llm_rows_with_evidence_text": (
                     llm_df["evidence_text"].notna().sum()
                     if "evidence_text" in llm_df.columns

@@ -10,7 +10,7 @@ def main() -> None:
     print(f"LLM extracted records CSV: {llm_csv}")
 
     print("\nMerging LLM extracted records into master dataset...")
-    output_path, summary = append_llm_records_to_master()
+    output_path, summary = append_llm_records_to_master(make_backup=False)
 
     print("\nStep 05b complete: LLM records merged into master dataset.")
     print(f"Updated master dataset: {output_path}")

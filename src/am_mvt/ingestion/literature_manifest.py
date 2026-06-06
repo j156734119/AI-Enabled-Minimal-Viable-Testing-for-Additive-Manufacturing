@@ -9,6 +9,7 @@ import pandas as pd
 from am_mvt.config import get_path
 from am_mvt.ingestion.pdf_title_normaliser import (
     extract_pdf_evidence,
+    infer_journal_from_filename,
     infer_journal_from_text,
     match_candidate,
     normalise_doi,
@@ -138,6 +139,7 @@ def build_manifest_row(
         journal = first_non_empty(
             candidate.get("journal"),
             match.get("matched_journal"),
+            infer_journal_from_filename(pdf_path.name),
             infer_journal_from_text(evidence.first_pages_text),
         )
         year = normalise_year(
@@ -267,4 +269,3 @@ def save_literature_manifest(
     manifest.to_csv(output_path, index=False, encoding="utf-8-sig")
 
     return output_path, manifest
-

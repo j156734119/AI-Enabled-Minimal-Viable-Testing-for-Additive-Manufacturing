@@ -8,7 +8,8 @@ Screen user-approved additive manufacturing journals, public datasets, and suppl
 - Search keywords for metal AM, tensile properties, fatigue life, process parameters, defects, porosity, surface condition, and post-processing.
 
 ## Outputs
-- `data/interim/candidate_sources.csv`
+- `data/interim/candidate_sources_llm.csv`
+- `outputs/tables/source_screening_candidates_top50.csv`
 
 Recommended columns: `source_id`, `title`, `journal`, `year`, `doi`, `url`, `pdf_url`, `access_type`, `priority_tier`, `relevance_reason`, `local_pdf_filename`, `download_status`, `notes`.
 
@@ -22,6 +23,9 @@ Recommended columns: `source_id`, `title`, `journal`, `year`, `doi`, `url`, `pdf
 - Each candidate must have a title and at least one locator: DOI, URL, or dataset link.
 - Each row must include a relevance reason.
 - Sources outside the user-approved scope should be excluded or clearly marked as out-of-scope.
+- Search every approved journal before final ranking.
+- Reserve candidates from each journal when suitable papers are available.
+- Use a consistent 0-10 score scale and deduplicate by DOI or normalised title.
 
 ## Related scripts
 - `scripts/01_search_sources.py`

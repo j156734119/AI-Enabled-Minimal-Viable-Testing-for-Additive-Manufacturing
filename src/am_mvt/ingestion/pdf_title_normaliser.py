@@ -25,6 +25,16 @@ JOURNAL_CODES = {
     "progress in additive manufacturing": "progaddmanuf",
     "advanced engineering materials": "adem",
 }
+JOURNAL_NAMES_BY_CODE = {
+    "addma": "Additive Manufacturing",
+    "jmpt": "Journal of Materials Processing Technology",
+    "jmapro": "Journal of Manufacturing Processes",
+    "rpj": "Rapid Prototyping Journal",
+    "metals": "Metals",
+    "vpp": "Virtual and Physical Prototyping",
+    "progaddmanuf": "Progress in Additive Manufacturing",
+    "adem": "Advanced Engineering Materials",
+}
 
 TITLE_STOPWORDS = {
     "a",
@@ -348,10 +358,32 @@ def infer_journal_from_text(text: str) -> str:
     normalised_text = normalise_title(text[:20000])
 
     for journal_name in JOURNAL_CODES:
+        if journal_name == "additive manufacturing":
+            continue
+
         if normalise_title(journal_name) in normalised_text:
             return journal_name
 
+    lowered_text = text[:20000].lower()
+
+    if (
+        "j.addma" in lowered_text
+        or "elsevier.com/locate/addma" in lowered_text
+        or "journal of additive manufacturing" in lowered_text
+        or re.search(r"\badditive manufacturing\s+\d+\s*\(", lowered_text)
+    ):
+        return "additive manufacturing"
+
     return ""
+
+
+def infer_journal_from_filename(filename: str) -> str:
+    match = re.match(r"^\d{1,4}_([a-z0-9]+)_", Path(filename).name.lower())
+
+    if not match:
+        return ""
+
+    return JOURNAL_NAMES_BY_CODE.get(match.group(1), "")
 
 
 def normalise_year(value: object, text: str = "") -> str:

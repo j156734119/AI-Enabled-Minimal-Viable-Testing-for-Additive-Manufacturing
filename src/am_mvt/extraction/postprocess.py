@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,22 @@ def normalise_runout(value: Any) -> Any:
     return value
 
 
+def normalise_pdf_filename(value: Any) -> str:
+    filename = Path(str(value or "")).name
+
+    while filename.lower().endswith(".pdf.pdf"):
+        filename = filename[:-4]
+
+    return filename
+
+
+def source_id_from_pdf_filename(value: Any) -> str:
+    filename = normalise_pdf_filename(value)
+    stem = filename[:-4] if filename.lower().endswith(".pdf") else filename
+    source_id = re.sub(r"[^a-zA-Z0-9]+", "_", stem).strip("_").lower()
+    return source_id or "unknown_literature_source"
+
+
 def extract_records_from_llm_json(json_path: Path) -> list[dict[str, Any]]:
     """
     Load one LLM JSON output file and convert it into flat record dictionaries.
@@ -115,7 +132,8 @@ def extract_records_from_llm_json(json_path: Path) -> list[dict[str, Any]]:
 
     metadata = data.get("_metadata", {})
     chunk_id = metadata.get("chunk_id", json_path.stem)
-    source_file = metadata.get("source_file", "")
+    source_file = normalise_pdf_filename(metadata.get("source_file", ""))
+    source_id = source_id_from_pdf_filename(source_file)
 
     normalised_records: list[dict[str, Any]] = []
 
@@ -125,9 +143,14 @@ def extract_records_from_llm_json(json_path: Path) -> list[dict[str, Any]]:
 
         output_record = record.copy()
 
-        output_record["source_id"] = "llm_literature_extraction"
-        output_record["source_name"] = "LLM-assisted open-access literature extraction"
-        output_record["source_file"] = output_record.get("source_file") or source_file
+        output_record["source_id"] = source_id
+        output_record["source_name"] = (
+            output_record.get("source_title")
+            or source_id.replace("_", " ")
+        )
+        output_record["source_file"] = normalise_pdf_filename(
+            output_record.get("source_file") or source_file
+        )
         output_record["source_sheet"] = chunk_id
         output_record["record_id"] = f"{chunk_id}_record_{index:04d}"
         output_record["source_url"] = pd.NA

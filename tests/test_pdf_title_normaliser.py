@@ -1,5 +1,6 @@
 from am_mvt.ingestion.pdf_title_normaliser import (
     compact_title_slug,
+    infer_journal_from_filename,
     infer_journal_from_text,
     journal_code,
     normalise_doi,
@@ -42,3 +43,17 @@ def test_compact_repository_filename_components() -> None:
         "Fatigue behavior of additive manufactured 316L stainless steel parts: "
         "Effects of layer orientation and surface roughness"
     ) == "316l_fatigue_orientation_surface_roughness"
+
+
+def test_journal_is_recovered_from_repository_filename() -> None:
+    assert (
+        infer_journal_from_filename("021_rpj_2022_example.pdf")
+        == "Rapid Prototyping Journal"
+    )
+    assert infer_journal_from_filename("022_metals_2023_example.pdf") == "Metals"
+
+
+def test_generic_process_phrase_is_not_misread_as_journal() -> None:
+    assert infer_journal_from_text(
+        "This study concerns additive manufacturing of a metal alloy."
+    ) == ""

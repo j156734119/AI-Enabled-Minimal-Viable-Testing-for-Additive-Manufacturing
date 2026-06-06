@@ -1,24 +1,27 @@
 # Model Comparison Skill
 
 ## Purpose
-Train a controlled set of tabular regression models so the dissertation can compare simple baselines, linear regularised models, kernel models, bagging ensembles, and gradient boosting methods.
+Train a compact set of tabular regression models so the dissertation can compare a trivial baseline, a regularised linear model, bagging, and gradient boosting.
 
 ## Inputs
-- `data/processed/view_model1_static.csv`
+- `data/processed/view_model1_uts.csv`
 - `data/processed/view_model2_sn_fatigue.csv`
+- `data/processed/view_model3_elongation_yield.csv`
+- `data/processed/view_model4_elastic_modulus.csv`
 
 ## Outputs
 - `outputs/tables/project_regression_model_metrics.csv`
 - `outputs/tables/project_feature_importance.csv`
 - `outputs/tables/project_training_errors.csv`
+- `outputs/tables/project_best_model_summary.csv`
+- `outputs/tables/project_training_data_audit.csv`
 - `outputs/models/*.joblib`
 
 ## Candidate model families
 - Dummy mean baseline: confirms whether learned models beat a trivial predictor.
-- Ridge and ElasticNet: robust linear baselines for small, noisy tabular datasets.
-- Support Vector Regression: useful for small/medium datasets with nonlinear relationships.
-- Random Forest and Extra Trees: robust bagging ensembles for mixed tabular data and feature interactions.
-- Gradient Boosting, HistGradientBoosting, and XGBoost: strong nonlinear tabular baselines for process-property relationships.
+- Ridge: conservative regularised linear baseline.
+- Random Forest: nonlinear bagging model for mixed tabular data.
+- XGBoost: nonlinear boosting model for structured process-property data.
 
 ## Rules
 - Keep random seeds fixed.
@@ -26,7 +29,8 @@ Train a controlled set of tabular regression models so the dissertation can comp
 - Keep model metrics comparable by using the same split for all models per target.
 
 ## Validation checks
-- Each target should report train/test row counts, split method, MAE, RMSE, R2, and model path.
+- Each target should report train/test row counts, split method, MAE, RMSE, R2, improvement over Dummy, and model path.
+- Do not describe R2 as classification accuracy.
 - If a model fails for a target, record the error rather than failing silently.
 
 ## Related scripts

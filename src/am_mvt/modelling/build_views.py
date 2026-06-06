@@ -18,6 +18,7 @@ PROVENANCE_COLUMNS = [
     "doi",
     "source_title",
     "source_year",
+    "modelling_group_id",
 ]
 
 MODEL1_FEATURE_COLUMNS = [
@@ -216,6 +217,23 @@ def normalise_group_key(df: pd.DataFrame) -> pd.Series:
     return source_id.fillna("unknown_source") + "::" + dataset_id
 
 
+def normalise_split_group_key(df: pd.DataFrame) -> pd.Series:
+    """Keep records from the same paper or experimental dataset in one split."""
+    source_id = df.get(
+        "source_id",
+        pd.Series("unknown_source", index=df.index, dtype="string"),
+    ).astype("string")
+    source_id = source_id.fillna("unknown_source").str.strip()
+
+    dataset_id = df.get(
+        "dataset_id",
+        pd.Series(pd.NA, index=df.index, dtype="string"),
+    ).astype("string")
+    dataset_id = dataset_id.str.strip().replace("", pd.NA)
+
+    return source_id + "::" + dataset_id.fillna(source_id)
+
+
 def build_static_target_view(
     master_df: pd.DataFrame,
     model_key: str,
@@ -276,6 +294,7 @@ def build_static_target_view(
 
     static_df["task_type"] = model_key
     static_df["sample_weight"] = 1.0
+    static_df["modelling_group_id"] = normalise_split_group_key(static_df)
 
     return ensure_view_columns(static_df)
 
@@ -469,6 +488,7 @@ def build_model2_sn_fatigue_view(
 
     sn_df = add_equal_dataset_weights(sn_df)
     sn_df["task_type"] = "model2_sn_fatigue"
+    sn_df["modelling_group_id"] = normalise_split_group_key(sn_df)
 
     return ensure_view_columns(sn_df)
 
@@ -507,6 +527,9 @@ def make_view_summary(views: dict[str, pd.DataFrame]) -> pd.DataFrame:
             else 0,
             "source_count": df["source_id"].nunique(dropna=True)
             if "source_id" in df.columns
+            else 0,
+            "modelling_group_count": df["modelling_group_id"].nunique(dropna=True)
+            if "modelling_group_id" in df.columns
             else 0,
         }
 
@@ -551,6 +574,11 @@ def save_modelling_views(
 
     for view_name, output_path in output_paths.items():
         views[view_name].to_csv(output_path, index=False, encoding="utf-8-sig")
+
+    legacy_view_path = processed_dir / "view_model1_static.csv"
+
+    if legacy_view_path.exists():
+        legacy_view_path.unlink()
 
     summary_df = make_view_summary(views)
     summary_path = processed_dir / "model_view_summary.csv"

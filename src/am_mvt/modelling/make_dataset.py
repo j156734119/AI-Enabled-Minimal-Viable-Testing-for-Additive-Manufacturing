@@ -41,9 +41,10 @@ MODEL_CONFIGS = {
             "density_measurement_method",
             "defect_type",
         ],
-        "group_column": "dataset_id",
+        "group_column": "modelling_group_id",
         "weight_column": "sample_weight",
         "minimum_rows": 20,
+        "target_bounds": {"uts_MPa": (20.0, 4000.0)},
     },
     "model2_sn_fatigue": {
         "dataset_path": get_path("data", "processed", "view_model2_sn_fatigue.csv"),
@@ -81,9 +82,10 @@ MODEL_CONFIGS = {
             "density_measurement_method",
             "defect_type",
         ],
-        "group_column": "dataset_id",
+        "group_column": "modelling_group_id",
         "weight_column": "sample_weight",
         "minimum_rows": 30,
+        "target_bounds": {"log10_fatigue_life_cycles": (0.0, 12.0)},
     },
     "model3_elongation_yield": {
         "dataset_path": get_path(
@@ -120,9 +122,13 @@ MODEL_CONFIGS = {
             "density_measurement_method",
             "defect_type",
         ],
-        "group_column": "dataset_id",
+        "group_column": "modelling_group_id",
         "weight_column": "sample_weight",
         "minimum_rows": 20,
+        "target_bounds": {
+            "elongation_percent": (0.0, 150.0),
+            "yield_strength_MPa": (10.0, 3500.0),
+        },
     },
     "model4_elastic_modulus": {
         "dataset_path": get_path(
@@ -160,9 +166,10 @@ MODEL_CONFIGS = {
             "density_measurement_method",
             "defect_type",
         ],
-        "group_column": "dataset_id",
+        "group_column": "modelling_group_id",
         "weight_column": "sample_weight",
         "minimum_rows": 15,
+        "target_bounds": {"youngs_modulus_GPa": (1.0, 500.0)},
     },
 }
 
@@ -305,7 +312,7 @@ def split_by_group_if_possible(
             w_train = None
             w_test = None
 
-        split_method = "GroupShuffleSplit_by_dataset_id"
+        split_method = "GroupShuffleSplit_by_modelling_group"
 
     else:
         if sample_weight is not None:
@@ -367,6 +374,17 @@ def prepare_regression_data(
 
     df[target] = pd.to_numeric(df[target], errors="coerce")
     df = df.dropna(subset=[target]).copy()
+    target_rows_before_bounds = len(df)
+
+    target_bounds = config.get("target_bounds", {}).get(target)
+
+    if target_bounds is not None:
+        lower_bound, upper_bound = target_bounds
+        df = df.loc[
+            df[target].between(lower_bound, upper_bound, inclusive="both")
+        ].copy()
+
+    invalid_target_rows_removed = target_rows_before_bounds - len(df)
 
     minimum_rows = int(config.get("minimum_rows", 20))
 
@@ -432,4 +450,10 @@ def prepare_regression_data(
         "target": target,
         "n_rows": len(working_df),
         "n_groups": groups.nunique(dropna=True) if groups is not None else 0,
+        "source_count": (
+            working_df["source_id"].nunique(dropna=True)
+            if "source_id" in working_df.columns
+            else 0
+        ),
+        "invalid_target_rows_removed": invalid_target_rows_removed,
     }
