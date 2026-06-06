@@ -9,7 +9,7 @@ def main() -> None:
 
     print("Step 05 complete: project-focused master dataset built.")
     print(f"Master dataset: {master_path}")
-    print(f"Compatibility modelling dataset: {modelling_path}")
+    print(f"Master modelling dataset used for downstream views: {modelling_path}")
     print(f"Build report: {report_path}")
     print(f"Rows: {len(master_df)}")
     print(f"Columns: {len(master_df.columns)}")

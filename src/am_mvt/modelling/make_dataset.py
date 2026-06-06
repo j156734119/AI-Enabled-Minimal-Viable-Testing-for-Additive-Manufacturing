@@ -13,12 +13,10 @@ from am_mvt.config import get_path
 
 
 MODEL_CONFIGS = {
-    "model1_static": {
-        "dataset_path": get_path("data", "processed", "view_model1_static.csv"),
+    "model1_uts": {
+        "dataset_path": get_path("data", "processed", "view_model1_uts.csv"),
         "targets": [
             "uts_MPa",
-            "yield_strength_MPa",
-            "elongation_percent",
         ],
         "numeric_features": [
             "laser_power_W",
@@ -86,6 +84,85 @@ MODEL_CONFIGS = {
         "group_column": "dataset_id",
         "weight_column": "sample_weight",
         "minimum_rows": 30,
+    },
+    "model3_elongation_yield": {
+        "dataset_path": get_path(
+            "data",
+            "processed",
+            "view_model3_elongation_yield.csv",
+        ),
+        "targets": [
+            "elongation_percent",
+            "yield_strength_MPa",
+        ],
+        "numeric_features": [
+            "laser_power_W",
+            "scan_speed_mm_s",
+            "hatch_spacing_um",
+            "layer_thickness_um",
+            "ved_J_mm3",
+            "porosity_percent",
+            "relative_density_percent",
+            "uts_MPa",
+            "hardness_HV",
+        ],
+        "categorical_features": [
+            "alloy",
+            "alloy_family",
+            "am_process",
+            "machine_model",
+            "build_orientation",
+            "test_direction",
+            "scan_strategy",
+            "heat_treatment",
+            "surface_condition",
+            "post_processing",
+            "density_measurement_method",
+            "defect_type",
+        ],
+        "group_column": "dataset_id",
+        "weight_column": "sample_weight",
+        "minimum_rows": 20,
+    },
+    "model4_elastic_modulus": {
+        "dataset_path": get_path(
+            "data",
+            "processed",
+            "view_model4_elastic_modulus.csv",
+        ),
+        "targets": [
+            "youngs_modulus_GPa",
+        ],
+        "numeric_features": [
+            "laser_power_W",
+            "scan_speed_mm_s",
+            "hatch_spacing_um",
+            "layer_thickness_um",
+            "ved_J_mm3",
+            "porosity_percent",
+            "relative_density_percent",
+            "yield_strength_MPa",
+            "uts_MPa",
+            "elongation_percent",
+            "hardness_HV",
+        ],
+        "categorical_features": [
+            "alloy",
+            "alloy_family",
+            "am_process",
+            "machine_model",
+            "build_orientation",
+            "test_direction",
+            "scan_strategy",
+            "heat_treatment",
+            "surface_condition",
+            "post_processing",
+            "density_measurement_method",
+            "defect_type",
+        ],
+        "group_column": "dataset_id",
+        "weight_column": "sample_weight",
+        "minimum_rows": 15,
     },
 }
 

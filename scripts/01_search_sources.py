@@ -32,7 +32,13 @@ def parse_args() -> argparse.Namespace:
         "--per-journal-limit",
         type=int,
         default=8,
-        help="Maximum candidate papers requested from each approved journal.",
+        help="Maximum candidate papers requested from each journal per search round.",
+    )
+    parser.add_argument(
+        "--search-rounds",
+        type=int,
+        default=3,
+        help="Number of focused search rounds to run across the approved journals.",
     )
     parser.add_argument(
         "--year-from",
@@ -77,6 +83,7 @@ def main() -> None:
         year_from=args.year_from,
         year_to=args.year_to,
         model=args.model,
+        search_rounds=args.search_rounds,
     )
 
     print("\nLLM web source screening complete.")

@@ -22,6 +22,16 @@ The research focus is:
 - fatigue properties
 - failure mode information
 
+Current modelling targets:
+- Model 1: UTS prediction
+- Model 2: S-N fatigue life prediction
+- Model 3: elongation/yield response prediction
+- Model 4: elastic modulus / Young's modulus prediction
+
+Hardness and failure-mode labels should be preserved when explicitly stated,
+but failure mode is treated as candidate/future-extension data unless labels
+are clear and consistent.
+
 Each record should represent one experimental condition and one related mechanical result where possible.
 
 Use SI-style standard units:
@@ -35,6 +45,7 @@ Use SI-style standard units:
 - yield_strength_MPa in MPa
 - uts_MPa in MPa
 - elongation_percent in %
+- youngs_modulus_GPa in GPa
 - hardness_HV in HV
 - stress_amplitude_MPa in MPa
 - max_stress_MPa in MPa

@@ -193,15 +193,6 @@ def append_llm_records_to_master(
         encoding="utf-8-sig",
     )
 
-    compatibility_path = get_path("data", "processed", "modelling_dataset.csv")
-
-    if compatibility_path != output_path:
-        combined_df.to_csv(
-            compatibility_path,
-            index=False,
-            encoding="utf-8-sig",
-        )
-
     if "source_id" in combined_df.columns:
         llm_source_rows_after = (
             combined_df["source_id"]

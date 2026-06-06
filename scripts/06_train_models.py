@@ -18,7 +18,11 @@ def main() -> None:
     print("\nView summary:")
     print(view_summary)
 
-    print("\nTraining Model 1 and Model 2...")
+    print("\nTraining project modelling tasks...")
+    print("Model 1: UTS prediction")
+    print("Model 2: S-N fatigue life prediction")
+    print("Model 3: elongation/yield prediction")
+    print("Model 4: elastic modulus prediction")
 
     metrics_df, importance_df, errors_df = train_project_models(
         rebuild_views=False,

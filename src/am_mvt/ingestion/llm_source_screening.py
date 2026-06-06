@@ -40,6 +40,44 @@ MEETING_ONE_JOURNAL_SCOPE: list[JournalScope] = [
 ]
 
 
+JOURNAL_ALIASES: dict[str, str] = {
+    "additive manufacturing": "Additive Manufacturing",
+    "addit manuf": "Additive Manufacturing",
+    "journal of materials processing technology": "Journal of Materials Processing Technology",
+    "j mater process technol": "Journal of Materials Processing Technology",
+    "journal of manufacturing processes": "Journal of Manufacturing Processes",
+    "j manuf process": "Journal of Manufacturing Processes",
+    "rapid prototyping journal": "Rapid Prototyping Journal",
+    "rapid prototyping j": "Rapid Prototyping Journal",
+    "metals": "Metals",
+    "metals basel": "Metals",
+    "metals (basel)": "Metals",
+    "virtual and physical prototyping": "Virtual and Physical Prototyping",
+    "virtual & physical prototyping": "Virtual and Physical Prototyping",
+    "progress in additive manufacturing": "Progress in Additive Manufacturing",
+    "advanced engineering materials": "Advanced Engineering Materials",
+    "adv eng mater": "Advanced Engineering Materials",
+}
+
+
+SEARCH_FOCUS_AREAS: list[str] = [
+    (
+        "static tensile data: yield strength, ultimate tensile strength, "
+        "elongation to failure, elastic modulus, hardness, and processing "
+        "parameters for metal AM"
+    ),
+    (
+        "fatigue data: S-N curves, stress amplitude, fatigue life cycles, "
+        "runout, surface condition, defects, porosity, and build orientation"
+    ),
+    (
+        "process-structure-property data: LPBF, DED, WAAM, binder jetting, "
+        "heat treatment, post-processing, porosity, residual stress, and "
+        "mechanical property tables"
+    ),
+]
+
+
 SOURCE_SCREENING_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -174,11 +212,27 @@ def make_source_id(title: str, year: int | None) -> str:
     return base
 
 
+def normalise_journal_name(journal: str) -> str | None:
+    cleaned = re.sub(r"[^a-zA-Z0-9&() ]+", " ", journal).lower()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    if cleaned in JOURNAL_ALIASES:
+        return JOURNAL_ALIASES[cleaned]
+
+    without_parentheses = cleaned.replace("(", "").replace(")", "")
+
+    if without_parentheses in JOURNAL_ALIASES:
+        return JOURNAL_ALIASES[without_parentheses]
+
+    return None
+
+
 def build_search_prompt(
     journal_scope: JournalScope,
     per_journal_limit: int,
     year_from: int,
     year_to: int,
+    focus_area: str,
 ) -> str:
     return f"""
 Search the web for candidate original research papers from this journal only:
@@ -187,6 +241,7 @@ Journal: {journal_scope.journal}
 Priority tier: {journal_scope.priority_tier}
 Preferred publisher domain: {journal_scope.publisher_domain}
 Year range: {year_from}-{year_to}
+Search focus: {focus_area}
 
 Return up to {per_journal_limit} candidate papers that are highly relevant to:
 - metal additive manufacturing
@@ -197,6 +252,9 @@ Return up to {per_journal_limit} candidate papers that are highly relevant to:
 
 Rank papers higher when they are likely to contain extractable numerical data,
 tables, supplementary datasets, or clear experimental condition-property pairs.
+Prioritise papers that can support at least one of these current modelling
+targets: UTS, S-N fatigue life, elongation/yield response, or elastic/Young's
+modulus. Hardness and failure-mode labels are useful secondary fields.
 
 Only include papers from the specified journal. Do not include review-only
 papers unless they provide reusable public datasets. Do not include sources
@@ -213,6 +271,7 @@ def screen_one_journal(
     year_from: int,
     year_to: int,
     model: str,
+    focus_area: str,
     retry_count: int = 2,
 ) -> list[dict[str, Any]]:
     prompt = build_search_prompt(
@@ -220,6 +279,7 @@ def screen_one_journal(
         per_journal_limit=per_journal_limit,
         year_from=year_from,
         year_to=year_to,
+        focus_area=focus_area,
     )
 
     last_error: Exception | None = None
@@ -232,18 +292,7 @@ def screen_one_journal(
                     {"role": "system", "content": SCREENING_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                tools=[
-                    {
-                        "type": "web_search",
-                        "filters": {
-                            "allowed_domains": [
-                                journal_scope.publisher_domain,
-                                "doi.org",
-                                "www.crossref.org",
-                            ],
-                        },
-                    }
-                ],
+                tools=[{"type": "web_search"}],
                 tool_choice="auto",
                 text={
                     "format": {
@@ -294,14 +343,21 @@ def screen_one_journal(
 
 
 def normalise_candidates(candidates: list[dict[str, Any]]) -> pd.DataFrame:
+    approved_journals = {
+        item.journal.lower(): item.priority_tier for item in MEETING_ONE_JOURNAL_SCOPE
+    }
     rows: list[dict[str, Any]] = []
 
     for row in candidates:
         title = str(row.get("title") or "").strip()
         journal = str(row.get("journal") or "").strip()
+        canonical_journal = normalise_journal_name(journal)
 
         if not title or title.startswith("SCREENING_FAILED"):
             rows.append(row)
+            continue
+
+        if canonical_journal is None:
             continue
 
         year = row.get("year")
@@ -310,13 +366,13 @@ def normalise_candidates(candidates: list[dict[str, Any]]) -> pd.DataFrame:
         row = {
             "source_id": source_id,
             "title": title,
-            "journal": journal,
+            "journal": canonical_journal,
             "year": year,
             "doi": row.get("doi"),
             "url": row.get("url"),
             "pdf_url": row.get("pdf_url"),
             "access_type": row.get("access_type", "uncertain"),
-            "priority_tier": row.get("priority_tier", ""),
+            "priority_tier": approved_journals[canonical_journal.lower()],
             "relevance_score": row.get("relevance_score", 0.0),
             "data_richness_score": row.get("data_richness_score", 0.0),
             "impact_score": row.get("impact_score", 0.0),
@@ -348,31 +404,53 @@ def normalise_candidates(candidates: list[dict[str, Any]]) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def save_csv_with_permission_fallback(df: pd.DataFrame, path: str) -> str:
+    try:
+        df.to_csv(path, index=False, encoding="utf-8-sig")
+        return path
+    except PermissionError:
+        root, extension = os.path.splitext(path)
+        fallback_path = f"{root}_{time.strftime('%Y%m%d_%H%M%S')}{extension}"
+        df.to_csv(fallback_path, index=False, encoding="utf-8-sig")
+        return fallback_path
+
+
 def run_llm_web_source_screening(
     target_count: int = 50,
     per_journal_limit: int = 8,
     year_from: int = 2015,
     year_to: int = 2026,
     model: str = DEFAULT_SCREENING_MODEL,
+    search_rounds: int = 3,
 ) -> tuple[pd.DataFrame, dict[str, str]]:
     client = get_client()
     all_candidates: list[dict[str, Any]] = []
+    focus_areas = SEARCH_FOCUS_AREAS[: max(1, search_rounds)]
 
-    for journal_scope in MEETING_ONE_JOURNAL_SCOPE:
-        print(
-            f"Screening {journal_scope.journal} "
-            f"({journal_scope.priority_tier})..."
-        )
-        all_candidates.extend(
-            screen_one_journal(
-                client=client,
-                journal_scope=journal_scope,
-                per_journal_limit=per_journal_limit,
-                year_from=year_from,
-                year_to=year_to,
-                model=model,
+    for focus_index, focus_area in enumerate(focus_areas, start=1):
+        print(f"Search round {focus_index}/{len(focus_areas)}")
+
+        for journal_scope in MEETING_ONE_JOURNAL_SCOPE:
+            print(
+                f"Screening {journal_scope.journal} "
+                f"({journal_scope.priority_tier})..."
             )
-        )
+            all_candidates.extend(
+                screen_one_journal(
+                    client=client,
+                    journal_scope=journal_scope,
+                    per_journal_limit=per_journal_limit,
+                    year_from=year_from,
+                    year_to=year_to,
+                    model=model,
+                    focus_area=focus_area,
+                )
+            )
+
+        current_df = normalise_candidates(all_candidates)
+
+        if len(current_df) >= target_count:
+            break
 
     df = normalise_candidates(all_candidates)
 
@@ -388,10 +466,19 @@ def run_llm_web_source_screening(
     for path in output_paths.values():
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    df.to_csv(output_paths["interim"], index=False, encoding="utf-8-sig")
-    df.to_csv(output_paths["table"], index=False, encoding="utf-8-sig")
+    output_paths["interim"] = save_csv_with_permission_fallback(
+        df=df,
+        path=output_paths["interim"],
+    )
+    output_paths["table"] = save_csv_with_permission_fallback(
+        df=df,
+        path=output_paths["table"],
+    )
 
     scope_df = pd.DataFrame([asdict(item) for item in MEETING_ONE_JOURNAL_SCOPE])
-    scope_df.to_csv(output_paths["journal_scope"], index=False, encoding="utf-8-sig")
+    output_paths["journal_scope"] = save_csv_with_permission_fallback(
+        df=scope_df,
+        path=output_paths["journal_scope"],
+    )
 
     return df, output_paths

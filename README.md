@@ -55,8 +55,23 @@ Process signatures
 - Elongation
 - Fatigue life in cycles
 - Log-transformed fatigue life
+- Young's / elastic modulus
+- Hardness
 
-Failure mode information may be considered as a possible future extension, but it is not implemented as a main modelling output at this stage.
+Failure mode information may be recorded as candidate/future-extension data, but it is not implemented as a main modelling output at this stage because public labels are not yet consistent enough.
+
+## Current Modelling Tasks
+
+The current early-stage milestone is to complete the workflow up to model training for four dissertation-aligned tasks:
+
+```text
+Model 1: UTS prediction
+Model 2: S-N fatigue life prediction
+Model 3: elongation / yield response prediction
+Model 4: Young's / elastic modulus prediction
+```
+
+Each task is trained with controlled tabular-regression baselines so the project can compare simple mean and linear baselines against nonlinear tree and kernel models before later interpretation work.
 
 ## Repository Structure
 ```text
@@ -113,8 +128,10 @@ Then fill in the real values in .env.
 Run the project step by step:
 
 ```
-python scripts/01_search_sources.py          # optional: record candidate sources
-python scripts/02_download_open_files.py     # optional: download directly accessible open files
+python scripts/01_search_sources.py          # record core candidate sources, no API call
+python scripts/02_download_open_files.py     # prepare folders and provenance audit tables
+python scripts/02b_prepare_pdfs.py            # preview PDF title normalisation
+python scripts/02b_prepare_pdfs.py --apply    # move renamed PDFs into data/raw/pdfs
 python scripts/03_parse_documents.py
 python scripts/04_extract_with_llm.py
 python scripts/05_build_dataset.py
@@ -123,6 +140,45 @@ python scripts/06_train_models.py
 python scripts/07_explain_models.py
 python scripts/08_generate_testing_matrix.py
 ```
+
+Optional OpenAI web-assisted source screening can be run from Step 01:
+
+```
+python scripts/01_search_sources.py --llm-web-search --target-count 50 --per-journal-limit 8 --search-rounds 3
+```
+
+This produces candidate source tables for manual PDF collection. It does not automate publisher downloads, publisher logins, cookies, VPNs, or institutional access.
+
+Place newly downloaded PDFs in:
+
+```text
+data/raw/pdfs/inbox/
+```
+
+Step 02b reads PDF metadata, first-page title text, and DOI evidence. It
+prioritises exact DOI/candidate-title matches and prepares compact filenames
+that remain stable for text chunk generation, such as:
+
+```text
+001_addma_2019_316l_fatigue_orientation_surface_roughness.pdf
+```
+
+Run it without `--apply` first and review:
+
+```text
+outputs/tables/pdf_title_normalisation_plan.csv
+```
+
+Only the `--apply` run moves renamed PDFs from the inbox into
+`data/raw/pdfs/`, where Step 03 will parse them.
+
+For the current early milestone, stop after:
+
+```
+python scripts/06_train_models.py
+```
+
+Steps 07 and 08 are reserved for the later interpretation and reduced testing matrix stage.
 
 ## Important Notes
 

@@ -294,8 +294,7 @@ def train_project_models(
         save_modelling_views(max_sn_rows_per_dataset_id=max_sn_rows_per_dataset_id)
 
     training_plan = {
-        "model1_static": MODEL_CONFIGS["model1_static"]["targets"],
-        "model2_sn_fatigue": MODEL_CONFIGS["model2_sn_fatigue"]["targets"],
+        model_key: config["targets"] for model_key, config in MODEL_CONFIGS.items()
     }
 
     metric_frames = []
@@ -336,7 +335,10 @@ def train_project_models(
             columns=["model_key", "target", "model", "feature", "importance"]
         )
 
-    errors_df = pd.DataFrame(error_rows)
+    errors_df = pd.DataFrame(
+        error_rows,
+        columns=["model_key", "target", "error"],
+    )
 
     tables_dir = get_path("outputs", "tables")
     tables_dir.mkdir(parents=True, exist_ok=True)
