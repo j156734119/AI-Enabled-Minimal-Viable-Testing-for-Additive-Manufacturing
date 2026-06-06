@@ -1,0 +1,4 @@
+interface:
+  display_name: "PDF Provenance"
+  short_description: "Verify local research PDF identity and provenance"
+  default_prompt: "Use $pdf-provenance to verify and inventory the local research PDFs."

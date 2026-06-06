@@ -137,8 +137,9 @@ python scripts/02b_prepare_pdfs.py --apply    # move renamed PDFs into data/raw/
 python scripts/02c_export_literature_manifest.py  # export GitHub-safe article list
 python scripts/03_parse_documents.py
 python scripts/04_extract_with_llm.py --limit 0  # existing JSON outputs are skipped
+python scripts/04b_audit_extractions.py          # deterministic admission audit
 python scripts/05_build_dataset.py
-python scripts/05b_merge_llm_into_master.py
+python scripts/05b_merge_llm_into_master.py      # merges approved records only
 python scripts/06_train_models.py
 ```
 
@@ -200,6 +201,31 @@ python scripts/06_train_models.py
 ```
 
 Steps 07 and 08 are reserved for the later interpretation and reduced testing matrix stage.
+
+## Evidence Audit Gate
+
+OpenAI extraction produces candidate evidence, not verified modelling data.
+After Step 04, run:
+
+```text
+python scripts/04b_audit_extractions.py
+```
+
+This writes:
+
+```text
+data/interim/llm_extraction_audit_review.csv
+```
+
+Each record receives `approved`, `human_review_required`, or `rejected`.
+Step 05b stops if this audit is absent or malformed and admits only approved
+`source_id` plus `record_id` keys. Candidate values remain in
+`data/interim/llm_extracted_records.csv`; the audit file supplies decisions,
+not replacement evidence values.
+
+The project skills under `skills/` are dual-use task specifications. Codex uses
+their YAML metadata for discovery, while OpenAI API callers inject only the
+skill body into the system prompt.
 
 ## Important Notes
 

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from am_mvt.config import get_path
+from am_mvt.skill_loader import build_skill_system_prompt
 
 
 DEFAULT_SCREENING_MODEL = os.getenv("OPENAI_SCREENING_MODEL", "gpt-4o-mini")
@@ -185,15 +186,6 @@ def get_client() -> OpenAI:
         )
 
     return OpenAI()
-
-
-def load_source_screening_skill() -> str:
-    skill_path = get_path("skills", "source_screening", "SKILL.md")
-
-    if not skill_path.exists():
-        return ""
-
-    return skill_path.read_text(encoding="utf-8", errors="ignore")
 
 
 def crossref_candidate_score(title: str) -> float:
@@ -471,14 +463,10 @@ def screen_one_journal(
         year_to=year_to,
         focus_area=focus_area,
     )
-    skill_text = load_source_screening_skill()
-    system_prompt = SCREENING_SYSTEM_PROMPT
-
-    if skill_text:
-        system_prompt += (
-            "\n\nApply the following repository Source Screening Skill as "
-            "the bounded task specification:\n" + skill_text
-        )
+    system_prompt = build_skill_system_prompt(
+        SCREENING_SYSTEM_PROMPT,
+        "source-screening",
+    )
 
     last_error: Exception | None = None
 

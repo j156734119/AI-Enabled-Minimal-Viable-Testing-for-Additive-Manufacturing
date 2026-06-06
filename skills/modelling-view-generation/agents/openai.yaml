@@ -1,0 +1,4 @@
+interface:
+  display_name: "Modelling View Generation"
+  short_description: "Build task-specific approved AM modelling views"
+  default_prompt: "Use $modelling-view-generation to build the four dissertation modelling views."

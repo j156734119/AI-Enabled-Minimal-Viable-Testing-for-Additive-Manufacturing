@@ -7,6 +7,11 @@ import pandas as pd
 
 from am_mvt.cleaning.project_schema import MASTER_COLUMNS
 from am_mvt.config import get_path
+from am_mvt.extraction.audit_records import (
+    AUDIT_DECISION_COLUMNS,
+    load_approved_record_keys,
+    record_fingerprint,
+)
 
 
 LLM_AUDIT_EXTRA_COLUMNS = [
@@ -15,6 +20,11 @@ LLM_AUDIT_EXTRA_COLUMNS = [
     "page_or_section",
     "evidence_text",
     "confidence",
+    "audit_status",
+    "audit_reason",
+    "audit_method",
+    "reviewed_by",
+    "reviewed_at",
 ]
 
 
@@ -133,6 +143,7 @@ def add_engineered_features_if_available(df: pd.DataFrame) -> pd.DataFrame:
 def append_llm_records_to_master(
     master_path: str | Path | None = None,
     llm_csv_path: str | Path | None = None,
+    audit_path: str | Path | None = None,
     output_path: str | Path | None = None,
     make_backup: bool = True,
 ) -> tuple[Path, pd.DataFrame]:
@@ -148,6 +159,15 @@ def append_llm_records_to_master(
         llm_csv_path = get_path("data", "interim", "llm_extracted_records.csv")
     else:
         llm_csv_path = Path(llm_csv_path)
+
+    if audit_path is None:
+        audit_path = get_path(
+            "data",
+            "interim",
+            "llm_extraction_audit_review.csv",
+        )
+    else:
+        audit_path = Path(audit_path)
 
     if output_path is None:
         output_path = master_path
@@ -167,6 +187,34 @@ def append_llm_records_to_master(
     master_df = ensure_required_columns(read_csv_if_exists(master_path))
     llm_df = ensure_required_columns(read_csv_if_exists(llm_csv_path))
     llm_df = remove_empty_llm_rows(llm_df)
+    approved_keys = load_approved_record_keys(audit_path)
+    decision_metadata_columns = [
+        column
+        for column in AUDIT_DECISION_COLUMNS
+        if column not in {"source_id", "record_id", "record_fingerprint"}
+    ]
+    llm_df = llm_df.drop(
+        columns=[
+            column
+            for column in decision_metadata_columns
+            if column in llm_df.columns
+        ]
+    )
+    llm_df["record_fingerprint"] = llm_df.apply(record_fingerprint, axis=1)
+    llm_df = llm_df.merge(
+        approved_keys,
+        on=["source_id", "record_id", "record_fingerprint"],
+        how="inner",
+        validate="one_to_one",
+    )
+
+    if len(llm_df) != len(approved_keys):
+        raise ValueError(
+            "Approved audit records do not match the current candidate data. "
+            "Rerun python scripts/04b_audit_extractions.py."
+        )
+
+    llm_df = llm_df.drop(columns=["record_fingerprint"])
 
     if "extraction_method" in master_df.columns:
         is_previous_llm_record = (
@@ -183,8 +231,12 @@ def append_llm_records_to_master(
         output_path.replace(backup_path)
         print(f"Backup created: {backup_path}")
 
+    concat_frames = [
+        frame.dropna(axis=1, how="all")
+        for frame in [master_df, llm_df]
+    ]
     combined_df = pd.concat(
-        [master_df, llm_df],
+        concat_frames,
         ignore_index=True,
         sort=False,
     )
@@ -223,6 +275,7 @@ def append_llm_records_to_master(
             {
                 "master_rows_before": len(master_df),
                 "llm_rows_added": len(llm_df),
+                "audit_approved_keys": len(approved_keys),
                 "master_rows_after": len(combined_df),
                 "llm_source_rows_after": llm_source_rows_after,
                 "llm_source_count_after": llm_source_count_after,

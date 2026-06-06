@@ -22,12 +22,15 @@ def main() -> None:
         output_file.write_text(
             (
                 "priority,alloy_family,am_process,build_orientation,"
-                "surface_condition,test_type,reason\n"
+                "surface_condition,test_type,target_property,"
+                "recommended_test_condition,reason,supporting_features,"
+                "model_evidence,coverage_risk,confidence_level,"
+                "needs_validation\n"
             ),
             encoding="utf-8",
         )
 
-    print("Step 08 complete: testing matrix output file prepared.")
+    print("Step 08 specification placeholder: output schema prepared.")
     print(f"Testing matrix file: {output_file}")
 
 

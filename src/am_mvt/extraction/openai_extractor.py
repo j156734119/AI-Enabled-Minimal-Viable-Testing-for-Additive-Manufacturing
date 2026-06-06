@@ -12,7 +12,7 @@ except ImportError:
 
 from openai import OpenAI
 
-from am_mvt.extraction.prompts import SYSTEM_PROMPT, build_user_prompt
+from am_mvt.extraction.prompts import build_system_prompt, build_user_prompt
 from am_mvt.extraction.schemas import LLM_EXTRACTION_SCHEMA
 
 
@@ -79,7 +79,7 @@ def extract_records_from_chunk(
                 input=[
                     {
                         "role": "system",
-                        "content": SYSTEM_PROMPT,
+                        "content": build_system_prompt(),
                     },
                     {
                         "role": "user",

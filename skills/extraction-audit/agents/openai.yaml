@@ -1,0 +1,4 @@
+interface:
+  display_name: "Extraction Audit"
+  short_description: "Audit extracted records before modelling admission"
+  default_prompt: "Use $extraction-audit to audit the candidate extraction records."

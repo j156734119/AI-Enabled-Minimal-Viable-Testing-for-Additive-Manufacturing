@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Comparison"
+  short_description: "Compare compact reproducible AM regression models"
+  default_prompt: "Use $model-comparison to train and compare the project regression baselines."

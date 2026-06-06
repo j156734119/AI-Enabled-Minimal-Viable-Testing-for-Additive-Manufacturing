@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evidence-Grounded Extraction"
+  short_description: "Extract auditable AM experimental candidate records"
+  default_prompt: "Use $evidence-grounded-extraction to extract supported records from these paper chunks."
