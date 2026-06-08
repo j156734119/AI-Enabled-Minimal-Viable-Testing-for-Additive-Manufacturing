@@ -75,3 +75,6 @@ outputs/experiments/*
 
 # Logs
 *.log
+
+# Local archives of historical data, models, and results
+archive/

@@ -43,3 +43,16 @@ Skills describe rules and outputs; scripts provide reproducible execution. Keep 
 - Use conservative language: "associated with", "related to", "may influence", and "supports prioritisation".
 - Avoid unsupported causal claims such as "causes" unless the source evidence is experimental and directly supports causality.
 - Say "agent-assisted" or "semi-automated" rather than "fully automatic" for literature search, extraction, and curation.
+
+## Git commits
+- All commit messages must use Conventional Commits:
+  `<type>(<optional-scope>)!: <description>`.
+- The scope and breaking-change marker `!` are optional.
+- Allowed types are `feat`, `fix`, `docs`, `test`, `refactor`, `perf`,
+  `build`, `ci`, and `chore`.
+- The description must be non-empty. Prefer a concise English imperative
+  phrase that starts with a lowercase letter and has no trailing period.
+- Enable the repository hook with `git config core.hooksPath .githooks`.
+- On Windows, run Git commands through Git for Windows. The hook uses the
+  bundled POSIX shell and must retain its `#!/bin/sh` line and LF-compatible
+  script syntax.

@@ -29,6 +29,10 @@
 | Model evidence | `outputs/tables/project_*.csv` |
 | Testing matrix | `outputs/tables/reduced_testing_matrix.csv` |
 
+Source screening is performed only through the OpenAI Responses API
+`web_search` tool. Previous canonical source-screening tables are retained under
+`archive/source_search_runs/<utc_timestamp>/` before successful replacement.
+
 ## Evidence Contract
 
 Literature-derived candidates preserve `source_id`, `source_title`, `doi`,

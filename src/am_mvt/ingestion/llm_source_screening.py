@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import math
 import os
 import re
+import shutil
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-import requests
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from am_mvt.config import get_path
 from am_mvt.skill_loader import build_skill_system_prompt
@@ -124,26 +123,6 @@ class SourceScreeningResponse(BaseModel):
 SOURCE_SCREENING_SCHEMA = SourceScreeningResponse.model_json_schema()
 
 
-def make_crossref_session() -> requests.Session:
-    retry = Retry(
-        total=3,
-        backoff_factor=0.5,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET"}),
-    )
-    session = requests.Session()
-    session.headers.update(
-        {
-            "User-Agent": (
-                "am-mvt-source-screening/1.0 "
-                "(MSc research metadata screening)"
-            )
-        }
-    )
-    session.mount("https://", HTTPAdapter(max_retries=retry))
-    return session
-
-
 SCREENING_SYSTEM_PROMPT = """
 You are a cautious source-screening assistant for an MSc dissertation on
 AI-enabled minimal viable testing for metal additive manufacturing.
@@ -168,175 +147,6 @@ manual_download_required or uncertain.
 
 def get_client() -> OpenAI:
     return get_openai_client()
-
-
-def crossref_candidate_score(title: str) -> float:
-    keywords = {
-        "additive",
-        "manufacturing",
-        "fatigue",
-        "tensile",
-        "strength",
-        "elongation",
-        "modulus",
-        "porosity",
-        "defect",
-        "laser",
-        "powder",
-        "metal",
-        "alloy",
-    }
-    title_tokens = set(re.findall(r"[a-z0-9]+", title.lower()))
-    return min(10.0, 2.0 + len(title_tokens & keywords) * 0.9)
-
-
-def is_crossref_title_relevant(title: str) -> bool:
-    lowered = title.lower()
-    am_terms = [
-        "additive manufact",
-        "3d print",
-        "powder bed fusion",
-        "selective laser",
-        "direct metal deposition",
-        "directed energy deposition",
-        "wire arc",
-        "waam",
-        "binder jet",
-    ]
-    metal_terms = [
-        "metal",
-        "alloy",
-        "steel",
-        "aluminium",
-        "aluminum",
-        "titanium",
-        "inconel",
-        "ti-6al-4v",
-        "alsi",
-        "in718",
-        "316l",
-        "17-4",
-    ]
-    data_terms = [
-        "fatigue",
-        "strength",
-        "tensile",
-        "mechanical",
-        "modulus",
-        "elongation",
-        "porosity",
-        "density",
-        "hardness",
-        "defect",
-        "microstructure",
-        "process parameter",
-        "parameter optim",
-    ]
-    excluded_terms = ["review", "survey", "state of the art", "overview"]
-
-    return (
-        any(term in lowered for term in am_terms)
-        and any(term in lowered for term in metal_terms)
-        and any(term in lowered for term in data_terms)
-        and not any(term in lowered for term in excluded_terms)
-    )
-
-
-def search_crossref_journal(
-    journal_scope: JournalScope,
-    per_journal_limit: int,
-    year_from: int,
-    year_to: int,
-    timeout_seconds: int = 20,
-    session: requests.Session | None = None,
-) -> list[dict[str, Any]]:
-    query = (
-        "metal additive manufacturing fatigue tensile strength elongation "
-        "elastic modulus porosity process parameters"
-    )
-    params = {
-        "query.container-title": journal_scope.journal,
-        "query.bibliographic": query,
-        "filter": (
-            f"from-pub-date:{year_from}-01-01,"
-            f"until-pub-date:{year_to}-12-31,type:journal-article"
-        ),
-        "rows": max(per_journal_limit * 3, 20),
-        "select": "DOI,title,container-title,published,URL,is-referenced-by-count",
-    }
-    client = session or make_crossref_session()
-
-    try:
-        response = client.get(
-            "https://api.crossref.org/works",
-            params=params,
-            timeout=timeout_seconds,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        print(f"  Crossref lookup failed for {journal_scope.journal}: {exc}")
-        return []
-
-    items = payload.get("message", {}).get("items", [])
-    candidates: list[dict[str, Any]] = []
-
-    for item in items:
-        container_titles = item.get("container-title") or []
-        canonical_journal = normalise_journal_name(
-            container_titles[0] if container_titles else ""
-        )
-
-        if canonical_journal != journal_scope.journal:
-            continue
-
-        titles = item.get("title") or []
-        title = str(titles[0] if titles else "").strip()
-
-        if not title or not is_crossref_title_relevant(title):
-            continue
-
-        date_parts = item.get("published", {}).get("date-parts", [[]])
-        year = date_parts[0][0] if date_parts and date_parts[0] else None
-        citations = int(item.get("is-referenced-by-count") or 0)
-        relevance_score = crossref_candidate_score(title)
-        impact_score = min(10.0, 2.0 + math.log10(citations + 1) * 2.5)
-        selection_score = (
-            relevance_score * 0.55
-            + 5.0 * 0.25
-            + impact_score * 0.20
-        )
-
-        candidates.append(
-            {
-                "title": title,
-                "journal": journal_scope.journal,
-                "year": year,
-                "doi": item.get("DOI"),
-                "url": item.get("URL"),
-                "pdf_url": None,
-                "access_type": "uncertain",
-                "priority_tier": journal_scope.priority_tier,
-                "relevance_score": relevance_score,
-                "data_richness_score": 5.0,
-                "impact_score": impact_score,
-                "selection_score": selection_score,
-                "relevance_reason": (
-                    "Crossref journal-constrained metadata match; abstract/full "
-                    "text relevance still requires screening."
-                ),
-                "expected_extractable_data": "",
-                "manual_action": "Review abstract and obtain the PDF lawfully.",
-                "source_evidence_url": item.get("URL"),
-                "notes": "Metadata discovered and journal-checked through Crossref.",
-                "_requested_journal": journal_scope.journal,
-            }
-        )
-
-        if len(candidates) >= per_journal_limit:
-            break
-
-    return candidates
 
 
 def make_source_id(title: str, year: int | None) -> str:
@@ -609,18 +419,83 @@ def select_balanced_candidates(
     return selected.head(target_count).reset_index(drop=True)
 
 
-def save_csv_with_permission_fallback(df: pd.DataFrame, path: str) -> str:
+def archive_existing_source_screening_outputs(
+    output_paths: dict[str, str],
+    timestamp: str | None = None,
+) -> Path | None:
+    existing_paths = [
+        Path(path)
+        for path in output_paths.values()
+        if Path(path).is_file()
+    ]
+    if not existing_paths:
+        return None
+
+    archive_timestamp = timestamp or datetime.now(timezone.utc).strftime(
+        "%Y%m%dT%H%M%S%fZ"
+    )
+    archive_dir = get_path("archive", "source_search_runs", archive_timestamp)
+    if archive_dir.exists():
+        raise FileExistsError(f"Source-search archive already exists: {archive_dir}")
+
+    for source_path in existing_paths:
+        relative_path = source_path.relative_to(get_path())
+        destination = archive_dir / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, destination)
+
+    return archive_dir
+
+
+def write_source_screening_outputs(
+    df: pd.DataFrame,
+    timestamp: str | None = None,
+) -> dict[str, str]:
+    output_paths = {
+        "interim": str(get_path("data", "interim", "candidate_sources_llm.csv")),
+        "table": str(
+            get_path("outputs", "tables", "source_screening_candidates_top50.csv")
+        ),
+        "journal_scope": str(
+            get_path("outputs", "tables", "source_screening_journal_scope.csv")
+        ),
+    }
+    scope_df = pd.DataFrame([asdict(item) for item in MEETING_ONE_JOURNAL_SCOPE])
+    output_frames = {
+        "interim": df,
+        "table": df,
+        "journal_scope": scope_df,
+    }
+    temporary_paths: dict[str, Path] = {}
+
     try:
-        df.to_csv(path, index=False, encoding="utf-8-sig")
-        return path
-    except PermissionError:
-        root, extension = os.path.splitext(path)
-        fallback_path = f"{root}_{time.strftime('%Y%m%d_%H%M%S')}{extension}"
-        df.to_csv(fallback_path, index=False, encoding="utf-8-sig")
-        return fallback_path
+        for key, path_text in output_paths.items():
+            path = Path(path_text)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = path.with_name(f".{path.name}.tmp")
+            output_frames[key].to_csv(
+                temporary_path,
+                index=False,
+                encoding="utf-8-sig",
+            )
+            temporary_paths[key] = temporary_path
+
+        archive_existing_source_screening_outputs(
+            output_paths=output_paths,
+            timestamp=timestamp,
+        )
+
+        for key, path_text in output_paths.items():
+            os.replace(temporary_paths[key], path_text)
+    finally:
+        for temporary_path in temporary_paths.values():
+            if temporary_path.exists():
+                temporary_path.unlink()
+
+    return output_paths
 
 
-def run_llm_web_source_screening(
+def run_openai_agent_source_screening(
     target_count: int = 50,
     per_journal_limit: int = 8,
     min_per_journal: int = 4,
@@ -628,26 +503,10 @@ def run_llm_web_source_screening(
     year_to: int = 2026,
     model: str = DEFAULT_SCREENING_MODEL,
     search_rounds: int = 3,
-    use_crossref: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, str]]:
     client = get_client()
     all_candidates: list[dict[str, Any]] = []
     focus_areas = SEARCH_FOCUS_AREAS[: max(1, search_rounds)]
-
-    if use_crossref:
-        print("Collecting journal-constrained Crossref metadata candidates...")
-        crossref_session = make_crossref_session()
-
-        for journal_scope in MEETING_ONE_JOURNAL_SCOPE:
-            all_candidates.extend(
-                search_crossref_journal(
-                    journal_scope=journal_scope,
-                    per_journal_limit=per_journal_limit,
-                    year_from=year_from,
-                    year_to=year_to,
-                    session=crossref_session,
-                )
-            )
 
     for focus_index, focus_area in enumerate(focus_areas, start=1):
         print(f"Search round {focus_index}/{len(focus_areas)}")
@@ -708,28 +567,11 @@ def run_llm_web_source_screening(
             min_per_journal=min_per_journal,
         )
 
-    output_paths = {
-        "interim": str(get_path("data", "interim", "candidate_sources_llm.csv")),
-        "table": str(get_path("outputs", "tables", "source_screening_candidates_top50.csv")),
-        "journal_scope": str(get_path("outputs", "tables", "source_screening_journal_scope.csv")),
-    }
+    if df.empty:
+        raise RuntimeError(
+            "OpenAI agent source screening returned no valid candidates. "
+            "Existing Step 01 outputs were left unchanged."
+        )
 
-    for path in output_paths.values():
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-
-    output_paths["interim"] = save_csv_with_permission_fallback(
-        df=df,
-        path=output_paths["interim"],
-    )
-    output_paths["table"] = save_csv_with_permission_fallback(
-        df=df,
-        path=output_paths["table"],
-    )
-
-    scope_df = pd.DataFrame([asdict(item) for item in MEETING_ONE_JOURNAL_SCOPE])
-    output_paths["journal_scope"] = save_csv_with_permission_fallback(
-        df=scope_df,
-        path=output_paths["journal_scope"],
-    )
-
+    output_paths = write_source_screening_outputs(df)
     return df, output_paths

@@ -53,4 +53,4 @@ cannot be completed, or a result cannot be tied to a source locator.
 
 # Commands
 
-`python scripts/01_search_sources.py --llm-web-search`
+`python scripts/01_search_sources.py`

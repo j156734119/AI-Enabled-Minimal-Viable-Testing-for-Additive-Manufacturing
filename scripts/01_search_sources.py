@@ -2,25 +2,18 @@ from __future__ import annotations
 
 import argparse
 
-from am_mvt.config import load_config
-from am_mvt.ingestion.dataset_registry import write_core_sources_csv
 from am_mvt.ingestion.llm_source_screening import (
     DEFAULT_SCREENING_MODEL,
-    run_llm_web_source_screening,
+    run_openai_agent_source_screening,
 )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Register core sources and optionally run OpenAI web-assisted "
-            "source screening within the Meeting one journal scope."
+            "Run OpenAI agent web source screening within the approved "
+            "additive-manufacturing journal scope."
         )
-    )
-    parser.add_argument(
-        "--llm-web-search",
-        action="store_true",
-        help="Use OpenAI web search to screen candidate AM papers.",
     )
     parser.add_argument(
         "--target-count",
@@ -64,31 +57,14 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SCREENING_MODEL,
         help="OpenAI model used for web source screening.",
     )
-    parser.add_argument(
-        "--no-crossref",
-        action="store_true",
-        help="Disable the public Crossref metadata fallback.",
-    )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> None:
     args = parse_args()
-    config = load_config()
-    output_path = write_core_sources_csv()
-
-    print("Step 01 complete: core dataset sources registered.")
-    print(f"Project: {config['project']['title']}")
-    print(f"Candidate sources saved to: {output_path}")
-
-    if not args.llm_web_search:
-        print("\nLLM web source screening was not requested.")
-        print("To run it, use: python scripts/01_search_sources.py --llm-web-search")
-        return
-
-    print("\nRunning OpenAI web-assisted source screening...")
-    screened_df, output_paths = run_llm_web_source_screening(
+    print("Step 01: running OpenAI agent web source screening...")
+    screened_df, output_paths = run_openai_agent_source_screening(
         target_count=args.target_count,
         per_journal_limit=args.per_journal_limit,
         min_per_journal=args.min_per_journal,
@@ -96,10 +72,9 @@ def main() -> None:
         year_to=args.year_to,
         model=args.model,
         search_rounds=args.search_rounds,
-        use_crossref=not args.no_crossref,
     )
 
-    print("\nLLM web source screening complete.")
+    print("\nStep 01 complete: OpenAI agent web source screening finished.")
     print(f"Screened candidates: {len(screened_df)}")
     print(f"Workflow CSV: {output_paths['interim']}")
     print(f"Output table: {output_paths['table']}")

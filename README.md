@@ -136,12 +136,48 @@ copy .env.example .env
 
 Then fill in the real values in .env.
 
+## Commit Message Validation
+
+This repository enforces Conventional Commits for the first line of every
+commit message:
+
+```text
+<type>(<optional-scope>)!: <description>
+```
+
+The scope and breaking-change marker `!` are optional. Allowed types are:
+
+```text
+feat|fix|docs|test|refactor|perf|build|ci|chore
+```
+
+The description must be non-empty. Examples:
+
+```text
+feat(extraction): retain page-level evidence metadata
+fix(training): prevent leakage during preprocessing
+docs: clarify lawful PDF acquisition workflow
+refactor!: replace the legacy modelling interface
+```
+
+Enable the tracked hook after cloning:
+
+```powershell
+git config core.hooksPath .githooks
+```
+
+For Windows, use Git for Windows rather than invoking the hook directly from
+PowerShell. Git for Windows runs `.githooks/commit-msg` with its bundled POSIX
+shell. Keep the hook filename extensionless, retain the `#!/bin/sh` shebang,
+and avoid PowerShell-only syntax inside the hook. The automated tests use
+`git hook run commit-msg` and do not create commits.
+
 ## Workflow
 
 Run the project step by step:
 
 ```
-python scripts/01_search_sources.py          # record core candidate sources, no API call
+python scripts/01_search_sources.py          # OpenAI Responses API agent web search
 python scripts/02_download_open_files.py     # prepare folders and provenance audit tables
 python scripts/02b_prepare_pdfs.py            # preview PDF title normalisation
 python scripts/02b_prepare_pdfs.py --apply    # move renamed PDFs into data/raw/pdfs
@@ -154,17 +190,32 @@ python scripts/05b_merge_llm_into_master.py      # merges approved records only
 python scripts/06_train_models.py --run-name cpu_fast_v1
 ```
 
-Optional OpenAI web-assisted source screening can be run from Step 01:
+Step 01 always uses the OpenAI Responses API with the `web_search` tool:
 
 ```
-python scripts/01_search_sources.py --llm-web-search --target-count 50 --per-journal-limit 8 --min-per-journal 4 --search-rounds 3
+python scripts/01_search_sources.py --target-count 50 --per-journal-limit 8 --min-per-journal 4 --search-rounds 3
 ```
 
-This combines OpenAI web-assisted screening with public Crossref metadata,
-searches every approved journal before ranking, and reserves journal coverage
-when suitable candidates are available. It produces candidate source tables
-for manual PDF collection. It does not automate publisher downloads, publisher
-logins, cookies, VPNs, or institutional access.
+The source-screening agent searches every approved journal before ranking and
+reserves journal coverage when suitable candidates are available. It produces
+candidate source tables for manual PDF collection. It does not call Crossref,
+automate publisher downloads, or use publisher logins, cookies, VPNs, or
+institutional access. If the API returns no valid candidates, existing Step 01
+outputs remain unchanged. A successful new search archives the previous
+canonical CSV files under `archive/source_search_runs/<utc_timestamp>/`.
+
+Historical datasets, models, and experiment outputs can be reviewed and moved
+into the local ignored archive with:
+
+```text
+python scripts/archive_legacy_artifacts.py
+python scripts/archive_legacy_artifacts.py --apply
+```
+
+The first command is a dry run. The applied archive writes
+`archive/legacy_20260608/archive_manifest.csv` with source paths, archive paths,
+file sizes, modification times, and SHA-256 hashes. The current
+`outputs/experiments/cpu_fast_v1/` run is retained in place.
 
 Place newly downloaded PDFs in:
 
