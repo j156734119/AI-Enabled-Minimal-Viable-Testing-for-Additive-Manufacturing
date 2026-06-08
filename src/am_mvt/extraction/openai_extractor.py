@@ -3,55 +3,13 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any
-
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    load_dotenv = None
-
-from openai import OpenAI
 
 from am_mvt.extraction.prompts import build_system_prompt, build_user_prompt
-from am_mvt.extraction.schemas import LLM_EXTRACTION_SCHEMA
+from am_mvt.extraction.schemas import LLM_EXTRACTION_SCHEMA, parse_extraction_response
+from am_mvt.utils.openai import extract_output_text, get_openai_client
 
 
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-
-def load_environment() -> None:
-    if load_dotenv is not None:
-        load_dotenv()
-
-
-def get_openai_client() -> OpenAI:
-    load_environment()
-
-    if not os.getenv("OPENAI_API_KEY"):
-        raise EnvironmentError(
-            "OPENAI_API_KEY is not set. "
-            "Set it in PowerShell using: $env:OPENAI_API_KEY='your_api_key'"
-        )
-
-    return OpenAI()
-
-
-def extract_output_text(response: Any) -> str:
-    output_text = getattr(response, "output_text", None)
-
-    if output_text:
-        return output_text
-
-    parts: list[str] = []
-
-    for item in getattr(response, "output", []) or []:
-        for content in getattr(item, "content", []) or []:
-            text = getattr(content, "text", None)
-
-            if text:
-                parts.append(text)
-
-    return "\n".join(parts)
 
 
 def extract_records_from_chunk(
@@ -98,10 +56,7 @@ def extract_records_from_chunk(
             )
 
             raw_text = extract_output_text(response)
-            parsed = json.loads(raw_text)
-
-            if "records" not in parsed:
-                parsed["records"] = []
+            parsed = parse_extraction_response(json.loads(raw_text))
 
             parsed["_metadata"] = {
                 "source_file": source_file,

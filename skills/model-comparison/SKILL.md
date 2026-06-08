@@ -1,6 +1,6 @@
 ---
 name: model-comparison
-description: Train and compare compact reproducible tabular regression baselines for approved AM modelling views. Use when evaluating Dummy, Ridge, Random Forest, and XGBoost across dissertation targets.
+description: Train grouped, leakage-controlled AM regression benchmarks plus censor-aware and physics-anchored fatigue routes.
 ---
 
 # Goal
@@ -19,10 +19,17 @@ dissertation into a broad prediction competition.
 
 # Procedure
 
-1. Use fixed group-aware splits and random seeds.
-2. Train Dummy mean, Ridge, Random Forest, and XGBoost.
-3. Record metrics, failures, model files, and feature importance.
-4. Compare MAE and RMSE against Dummy.
+1. Use DOI-first, dataset-ID fallback groups and a 20% final holdout.
+2. Default to the CPU-oriented `fast` profile: `process_only`, three-fold
+   GroupKFold, and one lightweight CatBoost candidate.
+3. Use `standard --mode all` only when the full five-fold, dual-mode,
+   four-CatBoost comparison is required.
+4. Compare Dummy mean/median, alloy-family median, Ridge, Random Forest,
+   XGBoost, and conservative CatBoost candidates using mean CV MAE.
+5. For fatigue, also run hierarchical Basquin, Basquin plus CatBoost residual,
+   and XGBoost-AFT with right-censored runouts.
+6. Generate 90% OOF conformal intervals for ordinary and Basquin routes.
+7. Evaluate the final holdout once and retain physical monotonicity checks.
 
 # Decision Gates
 
@@ -32,12 +39,15 @@ dissertation into a broad prediction competition.
 
 # Outputs
 
-- Model metrics, best-model summary, training audit, errors, feature importance.
-- `outputs/models/*.joblib`
+- Run configuration, CV metrics, final holdout metrics, model registry,
+  Basquin parameters, physical checks, and model artifacts.
+- `outputs/experiments/<run_name>/`
 
 # Validation
 
-- Report train/test rows, groups, sources, MAE, RMSE, R2, and split method.
+- Report CV mean/std and final test MAE, RMSE, R2, and split method.
+- Report AFT negative log-likelihood and Harrell C-index.
+- Verify negative Basquin slopes and monotonic non-increasing stress scans.
 - Describe R2 as variance explained, not classification accuracy.
 
 # Stop Conditions
@@ -46,4 +56,10 @@ Stop a target when minimum rows or usable features are unavailable.
 
 # Commands
 
-`python scripts/06_train_models.py`
+Fast default:
+
+`python scripts/06_train_models.py --run-name <name>`
+
+Full comparison:
+
+`python scripts/06_train_models.py --run-name <name> --profile standard --mode all`

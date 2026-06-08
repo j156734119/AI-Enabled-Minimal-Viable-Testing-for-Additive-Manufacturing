@@ -25,6 +25,14 @@ def test_title_similarity_handles_number_and_double_extension() -> None:
     assert score == 1.0
 
 
+def test_title_similarity_handles_reordered_words() -> None:
+    score = title_similarity(
+        "Fatigue behaviour of LPBF Ti-6Al-4V",
+        "LPBF Ti-6Al-4V fatigue behaviour",
+    )
+    assert score > 0.9
+
+
 def test_doi_and_windows_filename_are_normalised() -> None:
     assert normalise_doi("https://doi.org/10.1016/j.addma.2022.102661.") == (
         "10.1016/j.addma.2022.102661"

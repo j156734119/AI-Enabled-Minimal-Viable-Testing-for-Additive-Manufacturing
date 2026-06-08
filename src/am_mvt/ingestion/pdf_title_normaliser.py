@@ -4,12 +4,13 @@ import re
 import shutil
 import unicodedata
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
 
 import pandas as pd
+from rapidfuzz import fuzz
 
 from am_mvt.config import get_path
+from am_mvt.utils.text import normalise_doi
 
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[-._;()/:a-z0-9]+", re.IGNORECASE)
@@ -86,14 +87,6 @@ class PdfEvidence:
     first_pages_text: str
 
 
-def normalise_doi(value: object) -> str:
-    text = "" if value is None else str(value)
-    text = text.strip().lower()
-    text = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", text)
-    text = re.sub(r"^doi\s*:\s*", "", text)
-    return text.rstrip(".,;:)]}")
-
-
 def normalise_title(value: object) -> str:
     text = "" if value is None else str(value)
     text = unicodedata.normalize("NFKC", text).lower()
@@ -114,15 +107,9 @@ def title_similarity(left: object, right: object) -> float:
     if left_text == right_text:
         return 1.0
 
-    left_tokens = set(left_text.split())
-    right_tokens = set(right_text.split())
-    overlap = len(left_tokens & right_tokens) / max(
-        1,
-        min(len(left_tokens), len(right_tokens)),
-    )
-    sequence = SequenceMatcher(None, left_text, right_text).ratio()
-
-    return max(sequence, overlap * 0.96)
+    sequence = fuzz.ratio(left_text, right_text) / 100.0
+    token_order = fuzz.token_sort_ratio(left_text, right_text) / 100.0
+    return max(sequence, token_order)
 
 
 def is_plausible_title(text: str) -> bool:

@@ -1,84 +1,61 @@
 from __future__ import annotations
 
-import pandas as pd
+import argparse
+from datetime import datetime
 
-from am_mvt.config import get_path
-from am_mvt.modelling.build_views import save_modelling_views
-from am_mvt.modelling.train_regression import train_project_models
+from am_mvt.modelling.experiment_training import run_experiment_suite
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train grouped-CV process-only and reduced-testing AM models, "
+            "including censor-aware AFT and Basquin residual fatigue routes."
+        )
+    )
+    parser.add_argument(
+        "--run-name",
+        default=f"fast_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        help="New directory name under outputs/experiments/.",
+    )
+    parser.add_argument(
+        "--profile",
+        default="fast",
+        choices=["fast", "standard"],
+        help="CPU-fast or full comparison profile.",
+    )
+    parser.add_argument(
+        "--mode",
+        default="process_only",
+        choices=["process_only", "reduced_testing", "all"],
+        help="Prediction mode selection.",
+    )
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=None,
+        help="Override grouped CV folds (fast=3, standard=5).",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
-    print("Building task-specific modelling views...")
-
-    view_paths, view_summary = save_modelling_views(
-        max_sn_rows_per_dataset_id=10,
+    args = parse_args()
+    print("Step 06: physics-anchored and censor-aware model training")
+    print(f"Run name: {args.run_name}")
+    print(f"Profile: {args.profile}")
+    print(f"Mode: {args.mode}")
+    print("Existing project metrics and models will not be overwritten.")
+    run_dir = run_experiment_suite(
+        run_name=args.run_name,
+        profile=args.profile,
+        n_splits=args.cv_folds,
+        mode=args.mode,
     )
-
-    print("\nModelling views saved:")
-    for name, path in view_paths.items():
-        print(f"{name}: {path}")
-
-    print("\nView summary:")
-    print(view_summary)
-
-    print("\nTraining project modelling tasks...")
-    print("Model 1: UTS prediction")
-    print("Model 2: S-N fatigue life prediction")
-    print("Model 3: elongation/yield prediction")
-    print("Model 4: elastic modulus prediction")
-    print(
-        "\nAlgorithms per target: Dummy baseline, Ridge, Random Forest, and XGBoost."
-    )
-    print(
-        "This is regression, so performance is reported with R2, MAE, and RMSE "
-        "rather than classification accuracy."
-    )
-
-    metrics_df, importance_df, errors_df = train_project_models(
-        rebuild_views=False,
-        max_sn_rows_per_dataset_id=10,
-    )
-
-    print("\nTraining complete.")
-
-    if not metrics_df.empty:
-        display_columns = [
-            "model_key",
-            "target",
-            "model",
-            "mae",
-            "rmse",
-            "r2",
-            "r2_percent_variance_explained",
-            "mae_improvement_vs_dummy_percent",
-            "is_best_non_dummy_model",
-        ]
-        print("\nRegression metrics:")
-        print(metrics_df[[column for column in display_columns if column in metrics_df]])
-
-        best_summary_path = get_path(
-            "outputs",
-            "tables",
-            "project_best_model_summary.csv",
-        )
-        best_summary = pd.read_csv(best_summary_path)
-        print("\nBest non-dummy model for each target:")
-        print(best_summary)
-    else:
-        print("\nNo successful model metrics were generated.")
-
-    if not errors_df.empty:
-        print("\nSome targets were skipped or failed:")
-        print(errors_df)
-
-    print("\nOutputs:")
-    print("Metrics: outputs/tables/project_regression_model_metrics.csv")
-    print("Feature importance: outputs/tables/project_feature_importance.csv")
-    print("Training errors: outputs/tables/project_training_errors.csv")
-    print("Best models: outputs/tables/project_best_model_summary.csv")
-    print("Data audit: outputs/tables/project_training_data_audit.csv")
-    print("Physical checks: outputs/tables/project_physical_sanity_checks.csv")
-    print("Models: outputs/models/")
+    print("\nStep 06 complete.")
+    print(f"Experiment outputs: {run_dir}")
+    print(f"Summary: {run_dir / 'tables' / 'experiment_summary.csv'}")
+    print(f"Registry: {run_dir / 'model_registry.json'}")
 
 
 if __name__ == "__main__":

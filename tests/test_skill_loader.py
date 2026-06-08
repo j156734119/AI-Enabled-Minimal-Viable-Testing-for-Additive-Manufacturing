@@ -28,9 +28,9 @@ def test_parse_skill_text_removes_frontmatter():
     assert "description:" not in skill.body
 
 
-def test_loader_accepts_legacy_underscore_request_name():
-    skill = load_project_skill("source_screening")
-    assert skill.name == "source-screening"
+def test_loader_requires_hyphen_case_request_name():
+    with pytest.raises(FileNotFoundError):
+        load_project_skill("source_screening")
 
 
 def test_build_skill_system_prompt_injects_body_only():
@@ -55,7 +55,7 @@ def test_invalid_frontmatter_is_rejected():
         )
 
 
-def test_canonical_skill_name_converts_underscores():
-    assert canonical_skill_name("Evidence_Grounded_Extraction") == (
+def test_canonical_skill_name_preserves_hyphen_case():
+    assert canonical_skill_name("Evidence-Grounded-Extraction") == (
         "evidence-grounded-extraction"
     )

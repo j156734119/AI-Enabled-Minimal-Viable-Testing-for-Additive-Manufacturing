@@ -9,6 +9,7 @@ import pandas as pd
 
 from am_mvt.cleaning.project_schema import MASTER_COLUMNS, standardise_table_to_project_schema
 from am_mvt.config import get_path
+from am_mvt.utils.values import is_missing, parse_boolean
 
 
 LLM_AUDIT_EXTRA_COLUMNS = [
@@ -84,24 +85,11 @@ def normalise_runout(value: Any) -> Any:
     """
     Convert common runout values into booleans where possible.
     """
-    if value is None:
+    if is_missing(value):
         return pd.NA
 
-    try:
-        if pd.isna(value):
-            return pd.NA
-    except Exception:
-        pass
-
-    text = str(value).strip().lower()
-
-    if text in {"true", "yes", "y", "1", "runout", "run-out", "survived"}:
-        return True
-
-    if text in {"false", "no", "n", "0", "failure", "failed"}:
-        return False
-
-    return value
+    parsed = parse_boolean(value)
+    return value if parsed is None else parsed
 
 
 def normalise_pdf_filename(value: Any) -> str:

@@ -55,6 +55,9 @@ outputs/figures/*
 outputs/tables/*
 outputs/reports/*
 outputs/*_extracted.txt
+outputs/experiments/*
+
+!outputs/experiments/.gitkeep
 
 !outputs/models/.gitkeep
 !outputs/figures/.gitkeep

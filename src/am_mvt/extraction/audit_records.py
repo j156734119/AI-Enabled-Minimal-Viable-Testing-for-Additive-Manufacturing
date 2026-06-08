@@ -13,6 +13,7 @@ from am_mvt.cleaning.project_schema import (
     OUTPUT_COLUMNS,
 )
 from am_mvt.config import get_path
+from am_mvt.utils.values import is_missing, parse_boolean
 
 
 AUDIT_STATUSES = {
@@ -96,37 +97,6 @@ FINGERPRINT_COLUMNS = list(
         ]
     )
 )
-
-
-def is_missing(value: Any) -> bool:
-    if value is None:
-        return True
-
-    try:
-        if pd.isna(value):
-            return True
-    except (TypeError, ValueError):
-        pass
-
-    return isinstance(value, str) and not value.strip()
-
-
-def parse_boolean(value: Any) -> bool | None:
-    if is_missing(value):
-        return None
-
-    if isinstance(value, bool):
-        return value
-
-    text = str(value).strip().lower()
-
-    if text in {"true", "1", "yes", "y"}:
-        return True
-
-    if text in {"false", "0", "no", "n"}:
-        return False
-
-    return None
 
 
 def normalise_fingerprint_value(value: Any) -> Any:
@@ -259,11 +229,11 @@ def audit_extracted_records(df: pd.DataFrame) -> pd.DataFrame:
     decisions = result.apply(audit_record, axis=1, result_type="expand")
 
     for column in decisions.columns:
-        result[column] = decisions[column]
+        result[column] = decisions[column].astype("object").to_numpy(copy=True)
 
-    result["reviewed_by"] = ""
-    result["reviewed_at"] = ""
-    return result
+    result["reviewed_by"] = pd.Series([""] * len(result), index=result.index, dtype="object")
+    result["reviewed_at"] = pd.Series([""] * len(result), index=result.index, dtype="object")
+    return result.copy(deep=True)
 
 
 def save_extraction_audit(

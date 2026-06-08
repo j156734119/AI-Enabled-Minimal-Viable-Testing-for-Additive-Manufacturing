@@ -71,9 +71,20 @@ Model 3: elongation / yield response prediction
 Model 4: Young's / elastic modulus prediction
 ```
 
-Each task uses a compact comparison set: Dummy mean baseline, Ridge, Random
-Forest, and XGBoost. This keeps the work focused on the four dissertation
-prediction tasks rather than turning it into a broad model competition.
+`process_only` is the dissertation's main result and excludes previously
+measured mechanical properties. `reduced_testing` may use selected measured
+properties and is reported as an auxiliary or diagnostic result.
+
+The default CPU-oriented `fast` profile runs only `process_only` with
+three-fold GroupKFold. It compares mean, median, alloy-family median, Ridge,
+Random Forest, XGBoost, and one lightweight CatBoost configuration. The
+optional `standard` profile retains four conservative CatBoost configurations,
+five-fold CV, and either or both prediction modes.
+
+Fatigue additionally compares ordinary failure-only log-life regression,
+hierarchical Basquin, Basquin plus a CatBoost residual correction, and
+XGBoost-AFT. AFT retains runouts as right-censored observations rather than
+treating the runout threshold as a failure life.
 
 ## Repository Structure
 ```text
@@ -140,7 +151,7 @@ python scripts/04_extract_with_llm.py --limit 0  # existing JSON outputs are ski
 python scripts/04b_audit_extractions.py          # deterministic admission audit
 python scripts/05_build_dataset.py
 python scripts/05b_merge_llm_into_master.py      # merges approved records only
-python scripts/06_train_models.py
+python scripts/06_train_models.py --run-name cpu_fast_v1
 ```
 
 Optional OpenAI web-assisted source screening can be run from Step 01:
@@ -197,10 +208,55 @@ metadata only and does not include or upload the PDF files.
 For the current early milestone, stop after:
 
 ```
-python scripts/06_train_models.py
+python scripts/06_train_models.py --run-name cpu_fast_v1
 ```
 
 Steps 07 and 08 are reserved for the later interpretation and reduced testing matrix stage.
+
+The default command is equivalent to:
+
+```text
+python scripts/06_train_models.py --run-name cpu_fast_v1 --profile fast --mode process_only --cv-folds 3
+```
+
+The fast profile uses 120 Random Forest trees, 200 XGBoost estimators, and one
+CatBoost model with depth 6, at most 300 iterations, and 30-round early
+stopping. The Basquin residual branch reuses this lightweight CatBoost.
+
+Run the auxiliary reduced-testing mode separately when needed:
+
+```text
+python scripts/06_train_models.py --run-name reduced_fast_v1 --profile fast --mode reduced_testing
+```
+
+Run the original full comparison explicitly:
+
+```text
+python scripts/06_train_models.py --run-name full_v1 --profile standard --mode all
+```
+
+Step 06 uses a DOI-first, dataset-ID fallback group split. It reserves a 20%
+final holdout and selects ordinary models using grouped-CV mean MAE: three
+folds for `fast` and five folds for `standard`. The final holdout is evaluated
+once. Each run is isolated under:
+
+```text
+outputs/experiments/<run_name>/
+```
+
+The run contains configuration, fold and summary metrics, Basquin parameters,
+physical monotonicity checks, model artifacts, and a model registry. Existing
+legacy metrics and models are not overwritten.
+
+After training, batch-predict proposed experiment scenarios with:
+
+```text
+python scripts/06b_predict_scenarios.py --run-dir outputs/experiments/cpu_fast_v1 --input examples/prediction_scenarios_template.csv --output outputs/experiments/cpu_fast_v1/scenario_predictions.csv --mode all
+```
+
+The output reports 90% out-of-fold conformal intervals for ordinary and
+Basquin routes. AFT reports a censor-aware point estimate and is kept separate;
+the three fatigue routes are not automatically averaged.
 
 ## Evidence Audit Gate
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from am_mvt.cleaning.build_master_dataset import save_master_dataset
 from am_mvt.config import get_path
+from am_mvt.modelling.build_views import save_modelling_views
 
 
 def main() -> None:
@@ -56,6 +57,13 @@ def main() -> None:
     summary.to_csv(validation_path, index=False, encoding="utf-8-sig")
 
     print(f"\nQuick summary saved to: {validation_path}")
+
+    view_paths, view_summary = save_modelling_views(master_path=modelling_path)
+    print("\nTask-specific modelling views:")
+    for name, path in view_paths.items():
+        print(f"{name}: {path}")
+    print("\nModelling view summary:")
+    print(view_summary)
 
 
 if __name__ == "__main__":

@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-import json
 import math
 import os
 import re
 import time
 from dataclasses import asdict, dataclass
-from typing import Any
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from typing import Any, Literal
 
 import pandas as pd
-from dotenv import load_dotenv
+import requests
 from openai import OpenAI
+from pydantic import BaseModel, ConfigDict
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from am_mvt.config import get_path
 from am_mvt.skill_loader import build_skill_system_prompt
+from am_mvt.utils.openai import extract_output_text, get_openai_client
+from am_mvt.utils.text import normalise_doi
 
 
 DEFAULT_SCREENING_MODEL = os.getenv("OPENAI_SCREENING_MODEL", "gpt-4o-mini")
@@ -82,67 +84,64 @@ SEARCH_FOCUS_AREAS: list[str] = [
 ]
 
 
-SOURCE_SCREENING_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "candidates": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "title": {"type": "string"},
-                    "journal": {"type": "string"},
-                    "year": {"type": ["integer", "null"]},
-                    "doi": {"type": ["string", "null"]},
-                    "url": {"type": ["string", "null"]},
-                    "pdf_url": {"type": ["string", "null"]},
-                    "access_type": {
-                        "type": "string",
-                        "enum": [
-                            "open_access",
-                            "public_supplementary",
-                            "manual_download_required",
-                            "university_subscription",
-                            "uncertain",
-                        ],
-                    },
-                    "priority_tier": {"type": "string"},
-                    "relevance_score": {"type": "number"},
-                    "data_richness_score": {"type": "number"},
-                    "impact_score": {"type": "number"},
-                    "selection_score": {"type": "number"},
-                    "relevance_reason": {"type": "string"},
-                    "expected_extractable_data": {"type": "string"},
-                    "manual_action": {"type": "string"},
-                    "source_evidence_url": {"type": ["string", "null"]},
-                    "notes": {"type": "string"},
-                },
-                "required": [
-                    "title",
-                    "journal",
-                    "year",
-                    "doi",
-                    "url",
-                    "pdf_url",
-                    "access_type",
-                    "priority_tier",
-                    "relevance_score",
-                    "data_richness_score",
-                    "impact_score",
-                    "selection_score",
-                    "relevance_reason",
-                    "expected_extractable_data",
-                    "manual_action",
-                    "source_evidence_url",
-                    "notes",
-                ],
-            },
+AccessType = Literal[
+    "open_access",
+    "public_supplementary",
+    "manual_download_required",
+    "university_subscription",
+    "uncertain",
+]
+
+
+class SourceCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    journal: str
+    year: int | None
+    doi: str | None
+    url: str | None
+    pdf_url: str | None
+    access_type: AccessType
+    priority_tier: str
+    relevance_score: float
+    data_richness_score: float
+    impact_score: float
+    selection_score: float
+    relevance_reason: str
+    expected_extractable_data: str
+    manual_action: str
+    source_evidence_url: str | None
+    notes: str
+
+
+class SourceScreeningResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidates: list[SourceCandidate]
+
+
+SOURCE_SCREENING_SCHEMA = SourceScreeningResponse.model_json_schema()
+
+
+def make_crossref_session() -> requests.Session:
+    retry = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET"}),
+    )
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "am-mvt-source-screening/1.0 "
+                "(MSc research metadata screening)"
+            )
         }
-    },
-    "required": ["candidates"],
-}
+    )
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    return session
 
 
 SCREENING_SYSTEM_PROMPT = """
@@ -167,25 +166,8 @@ manual_download_required or uncertain.
 """
 
 
-def load_project_env() -> None:
-    env_path = get_path(".env")
-
-    if env_path.exists():
-        load_dotenv(env_path)
-    else:
-        load_dotenv()
-
-
 def get_client() -> OpenAI:
-    load_project_env()
-
-    if not os.getenv("OPENAI_API_KEY"):
-        raise EnvironmentError(
-            "OPENAI_API_KEY is not set. Add it to the project .env file before "
-            "running web source screening."
-        )
-
-    return OpenAI()
+    return get_openai_client()
 
 
 def crossref_candidate_score(title: str) -> float:
@@ -266,39 +248,33 @@ def search_crossref_journal(
     year_from: int,
     year_to: int,
     timeout_seconds: int = 20,
+    session: requests.Session | None = None,
 ) -> list[dict[str, Any]]:
     query = (
         "metal additive manufacturing fatigue tensile strength elongation "
         "elastic modulus porosity process parameters"
     )
-    params = urlencode(
-        {
-            "query.container-title": journal_scope.journal,
-            "query.bibliographic": query,
-            "filter": (
-                f"from-pub-date:{year_from}-01-01,"
-                f"until-pub-date:{year_to}-12-31,type:journal-article"
-            ),
-            "rows": max(per_journal_limit * 3, 20),
-            "select": (
-                "DOI,title,container-title,published,URL,is-referenced-by-count"
-            ),
-        }
-    )
-    request = Request(
-        f"https://api.crossref.org/works?{params}",
-        headers={
-            "User-Agent": (
-                "am-mvt-source-screening/1.0 "
-                "(MSc research metadata screening)"
-            )
-        },
-    )
+    params = {
+        "query.container-title": journal_scope.journal,
+        "query.bibliographic": query,
+        "filter": (
+            f"from-pub-date:{year_from}-01-01,"
+            f"until-pub-date:{year_to}-12-31,type:journal-article"
+        ),
+        "rows": max(per_journal_limit * 3, 20),
+        "select": "DOI,title,container-title,published,URL,is-referenced-by-count",
+    }
+    client = session or make_crossref_session()
 
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
+        response = client.get(
+            "https://api.crossref.org/works",
+            params=params,
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
         print(f"  Crossref lookup failed for {journal_scope.journal}: {exc}")
         return []
 
@@ -361,24 +337,6 @@ def search_crossref_journal(
             break
 
     return candidates
-
-
-def extract_output_text(response: Any) -> str:
-    output_text = getattr(response, "output_text", None)
-
-    if output_text:
-        return output_text
-
-    parts: list[str] = []
-
-    for item in getattr(response, "output", []) or []:
-        for content in getattr(item, "content", []) or []:
-            text = getattr(content, "text", None)
-
-            if text:
-                parts.append(text)
-
-    return "\n".join(parts)
 
 
 def make_source_id(title: str, year: int | None) -> str:
@@ -491,16 +449,16 @@ def screen_one_journal(
                 temperature=0,
             )
 
-            parsed = json.loads(extract_output_text(response))
-            candidates = parsed.get("candidates", [])
-
-            if isinstance(candidates, list):
-                for candidate in candidates:
-                    if isinstance(candidate, dict):
-                        candidate["_requested_journal"] = journal_scope.journal
-                return candidates
-
-            return []
+            parsed = SourceScreeningResponse.model_validate_json(
+                extract_output_text(response)
+            )
+            candidates = [
+                candidate.model_dump(mode="json")
+                for candidate in parsed.candidates
+            ]
+            for candidate in candidates:
+                candidate["_requested_journal"] = journal_scope.journal
+            return candidates
 
         except Exception as exc:
             last_error = exc
@@ -588,14 +546,7 @@ def normalise_candidates(candidates: list[dict[str, Any]]) -> pd.DataFrame:
     if df.empty:
         return df
 
-    df["_normalised_doi"] = (
-        df["doi"]
-        .astype("string")
-        .str.lower()
-        .str.replace("https://doi.org/", "", regex=False)
-        .str.strip()
-        .replace("", pd.NA)
-    )
+    df["_normalised_doi"] = df["doi"].map(normalise_doi).replace("", pd.NA)
     df["_normalised_title"] = (
         df["title"]
         .astype("string")
@@ -685,6 +636,7 @@ def run_llm_web_source_screening(
 
     if use_crossref:
         print("Collecting journal-constrained Crossref metadata candidates...")
+        crossref_session = make_crossref_session()
 
         for journal_scope in MEETING_ONE_JOURNAL_SCOPE:
             all_candidates.extend(
@@ -693,6 +645,7 @@ def run_llm_web_source_screening(
                     per_journal_limit=per_journal_limit,
                     year_from=year_from,
                     year_to=year_to,
+                    session=crossref_session,
                 )
             )
 

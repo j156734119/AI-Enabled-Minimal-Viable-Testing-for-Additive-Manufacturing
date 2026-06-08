@@ -17,17 +17,12 @@ class ProjectSkill:
 
 
 def canonical_skill_name(name: str) -> str:
-    return name.strip().lower().replace("_", "-")
+    return name.strip().lower()
 
 
 def skill_path_candidates(name: str) -> list[Path]:
     canonical_name = canonical_skill_name(name)
-    legacy_name = canonical_name.replace("-", "_")
-    candidates = [
-        get_path("skills", canonical_name, "SKILL.md"),
-        get_path("skills", legacy_name, "SKILL.md"),
-    ]
-    return list(dict.fromkeys(candidates))
+    return [get_path("skills", canonical_name, "SKILL.md")]
 
 
 def parse_skill_text(text: str, path: Path) -> ProjectSkill:

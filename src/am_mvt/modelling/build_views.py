@@ -575,11 +575,6 @@ def save_modelling_views(
     for view_name, output_path in output_paths.items():
         views[view_name].to_csv(output_path, index=False, encoding="utf-8-sig")
 
-    legacy_view_path = processed_dir / "view_model1_static.csv"
-
-    if legacy_view_path.exists():
-        legacy_view_path.unlink()
-
     summary_df = make_view_summary(views)
     summary_path = processed_dir / "model_view_summary.csv"
     summary_df.to_csv(summary_path, index=False, encoding="utf-8-sig")
