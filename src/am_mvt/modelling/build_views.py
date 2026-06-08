@@ -100,7 +100,7 @@ VIEW_COLUMNS = list(
         + MODEL1_TARGET_COLUMNS
         + MODEL3_TARGET_COLUMNS
         + MODEL4_TARGET_COLUMNS
-        + ["hardness_HV", "failure_mode", "fracture_origin"]
+        + ["hardness_HV"]
         + MODEL2_FEATURE_COLUMNS
         + MODEL2_TARGET_COLUMNS
     )
@@ -316,8 +316,9 @@ def build_model3_elongation_yield_view(master_df: pd.DataFrame) -> pd.DataFrame:
     Model 3:
     AM material/process/porosity/surface variables -> elongation and yield.
 
-    Failure-mode text is retained for later classification/audit work, but it is
-    not a primary training target at this stage because labels are inconsistent.
+    Qualitative fracture evidence is intentionally excluded from modelling
+    views because public labels are sparse, inconsistent, and not expert
+    ground truth.
     """
     return build_static_target_view(
         master_df=master_df,

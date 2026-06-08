@@ -58,7 +58,9 @@ Process signatures
 - Young's / elastic modulus
 - Hardness
 
-Failure mode information may be recorded as candidate/future-extension data, but it is not implemented as a main modelling output at this stage because public labels are not yet consistent enough.
+Failure mode is retained only as a possible future extension. The reviewed
+public datasets do not provide consistent structured labels, so it is not used
+as a current modelling target or feature.
 
 ## Current Modelling Tasks
 
@@ -135,42 +137,6 @@ copy .env.example .env
 ```
 
 Then fill in the real values in .env.
-
-## Commit Message Validation
-
-This repository enforces Conventional Commits for the first line of every
-commit message:
-
-```text
-<type>(<optional-scope>)!: <description>
-```
-
-The scope and breaking-change marker `!` are optional. Allowed types are:
-
-```text
-feat|fix|docs|test|refactor|perf|build|ci|chore
-```
-
-The description must be non-empty. Examples:
-
-```text
-feat(extraction): retain page-level evidence metadata
-fix(training): prevent leakage during preprocessing
-docs: clarify lawful PDF acquisition workflow
-refactor!: replace the legacy modelling interface
-```
-
-Enable the tracked hook after cloning:
-
-```powershell
-git config core.hooksPath .githooks
-```
-
-For Windows, use Git for Windows rather than invoking the hook directly from
-PowerShell. Git for Windows runs `.githooks/commit-msg` with its bundled POSIX
-shell. Keep the hook filename extensionless, retain the `#!/bin/sh` shebang,
-and avoid PowerShell-only syntax inside the hook. The automated tests use
-`git hook run commit-msg` and do not create commits.
 
 ## Workflow
 

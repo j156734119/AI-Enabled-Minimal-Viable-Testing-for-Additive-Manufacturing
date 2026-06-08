@@ -22,11 +22,13 @@ Create four reproducible modelling views from approved master data.
 2. Keep provenance and modelling group identifiers.
 3. Limit repeated S-N points per dataset and apply equal-dataset weighting.
 4. Keep records from one paper or experiment in the same split group.
+5. Exclude failure mode and fracture origin from every modelling view.
 
 # Decision Gates
 
 - Exclude rows without the relevant target.
 - Prevent repeated fatigue joins from dominating static-property views.
+- Keep failure-mode classification as future work.
 
 # Outputs
 

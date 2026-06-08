@@ -38,6 +38,8 @@ Skills describe rules and outputs; scripts provide reproducible execution. Keep 
 - Use multiple tabular-regression baselines because the dataset combines numerical process parameters, categorical AM descriptors, small/medium sample sizes, and possible nonlinear interactions.
 - Keep baseline models in the training pipeline so dissertation results can separate real predictive signal from trivial mean/linear baselines.
 - Prefer robust, reproducible defaults over heavy hyperparameter searches unless explicitly requested.
+- Treat failure mode as future work; do not use it as a current model target or
+  feature because the available labels are sparse and inconsistent.
 
 ## Writing and terminology
 - Use conservative language: "associated with", "related to", "may influence", and "supports prioritisation".

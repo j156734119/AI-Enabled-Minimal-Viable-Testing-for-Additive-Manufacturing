@@ -89,6 +89,9 @@ def test_master_dataset_builds_all_four_modelling_views(tmp_path):
     assert views["model2_sn_fatigue"].iloc[0][
         "log10_fatigue_life_cycles"
     ] == pytest.approx(5.0)
+    for view in views.values():
+        assert "failure_mode" not in view.columns
+        assert "fracture_origin" not in view.columns
 
 
 def test_fast_profile_uses_one_light_catboost_candidate():
