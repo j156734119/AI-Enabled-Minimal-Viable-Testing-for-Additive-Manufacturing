@@ -6,6 +6,7 @@ import pytest
 from sklearn.ensemble import RandomForestRegressor
 
 from am_mvt.modelling.model_explanation import (
+    _tree_shap_array,
     combination_coverage_rows,
     compare_feature_importance,
     grouped_error_rows,
@@ -96,6 +97,28 @@ def test_tree_shap_aggregates_to_original_features():
     assert {"signal", "noise"} == set(importance["feature"])
     assert importance.iloc[0]["feature"] == "signal"
     assert not samples.empty
+
+
+def test_tree_shap_disables_additivity_check_and_validates_shape():
+    class FakeExplainer:
+        def shap_values(self, values, *, check_additivity):
+            assert check_additivity is False
+            return np.ones((len(values), 2))
+
+    values = np.zeros((3, 2))
+    result = _tree_shap_array(
+        FakeExplainer(),
+        values,
+        expected_feature_count=2,
+    )
+    assert result.shape == (3, 2)
+
+    with pytest.raises(ValueError, match="does not match"):
+        _tree_shap_array(
+            FakeExplainer(),
+            values,
+            expected_feature_count=3,
+        )
 
 
 def test_importance_comparison_marks_dual_support():

@@ -409,17 +409,37 @@ def normalise_score(value: Any) -> float:
     return max(0.0, min(10.0, score))
 
 
+def merge_existing_candidates(df: pd.DataFrame) -> pd.DataFrame:
+    existing_path = get_path("data", "interim", "candidate_sources_llm.csv")
+    if not existing_path.exists():
+        return df
+    existing = pd.read_csv(existing_path, low_memory=False)
+    combined = pd.concat([df, existing], ignore_index=True, sort=False)
+    doi_key = combined["doi"].map(normalise_doi).replace("", pd.NA)
+    title_key = (
+        combined["title"]
+        .astype("string")
+        .str.lower()
+        .str.replace(r"[^a-z0-9]+", " ", regex=True)
+        .str.strip()
+    )
+    combined["_dedupe_key"] = doi_key.fillna("title:" + title_key)
+    combined = combined.drop_duplicates("_dedupe_key", keep="last")
+    return combined.drop(columns="_dedupe_key").reset_index(drop=True)
+
+
 def select_balanced_candidates(
     df: pd.DataFrame,
     target_count: int,
     min_per_journal: int,
+    journal_scope: list[JournalScope] | None = None,
 ) -> pd.DataFrame:
     if df.empty:
         return df
 
     selected_indices: list[int] = []
 
-    for scope in MEETING_ONE_JOURNAL_SCOPE:
+    for scope in journal_scope or MEETING_ONE_JOURNAL_SCOPE:
         journal_rows = df.loc[df["journal"].eq(scope.journal)]
         selected_indices.extend(journal_rows.head(min_per_journal).index.tolist())
 
@@ -466,6 +486,7 @@ def archive_existing_source_screening_outputs(
 def write_source_screening_outputs(
     df: pd.DataFrame,
     timestamp: str | None = None,
+    journal_scope: list[JournalScope] | None = None,
 ) -> dict[str, str]:
     output_paths = {
         "interim": str(get_path("data", "interim", "candidate_sources_llm.csv")),
@@ -476,7 +497,9 @@ def write_source_screening_outputs(
             get_path("outputs", "tables", "source_screening_journal_scope.csv")
         ),
     }
-    scope_df = pd.DataFrame([asdict(item) for item in MEETING_ONE_JOURNAL_SCOPE])
+    scope_df = pd.DataFrame(
+        [asdict(item) for item in journal_scope or MEETING_ONE_JOURNAL_SCOPE]
+    )
     output_frames = {
         "interim": df,
         "table": df,
@@ -512,6 +535,8 @@ def write_source_screening_outputs(
 
 
 def run_openai_agent_source_screening(
+    journals: list[str] | None = None,
+    merge_existing: bool = False,
     target_count: int = 50,
     per_journal_limit: int = 8,
     min_per_journal: int = 1,
@@ -521,21 +546,31 @@ def run_openai_agent_source_screening(
     search_rounds: int = 3,
 ) -> tuple[pd.DataFrame, dict[str, str]]:
     client = get_client()
+    requested = set(journals or [])
+    journal_scope = [
+        scope
+        for scope in MEETING_ONE_JOURNAL_SCOPE
+        if not requested or scope.journal in requested
+    ]
+    if requested and len(journal_scope) != len(requested):
+        known = {scope.journal for scope in journal_scope}
+        unknown = sorted(requested - known)
+        raise ValueError("Unknown journals: " + ", ".join(unknown))
     all_candidates: list[dict[str, Any]] = []
     focus_areas = SEARCH_FOCUS_AREAS[: max(1, search_rounds)]
 
     for focus_index, focus_area in enumerate(focus_areas, start=1):
         print(f"Search round {focus_index}/{len(focus_areas)}")
 
-        for journal_scope in MEETING_ONE_JOURNAL_SCOPE:
+        for journal in journal_scope:
             print(
-                f"Screening {journal_scope.journal} "
-                f"({journal_scope.priority_tier})..."
+                f"Screening {journal.journal} "
+                f"({journal.priority_tier})..."
             )
             all_candidates.extend(
                 screen_one_journal(
                     client=client,
-                    journal_scope=journal_scope,
+                    journal_scope=journal,
                     per_journal_limit=per_journal_limit,
                     year_from=year_from,
                     year_to=year_to,
@@ -554,20 +589,20 @@ def run_openai_agent_source_screening(
             "surface condition, orientation, and post-processing"
         )
 
-        for journal_scope in MEETING_ONE_JOURNAL_SCOPE:
-            current_count = int(journal_counts.get(journal_scope.journal, 0))
+        for journal in journal_scope:
+            current_count = int(journal_counts.get(journal.journal, 0))
 
             if current_count >= min_per_journal:
                 continue
 
             print(
-                f"Replenishing {journal_scope.journal}: "
+                f"Replenishing {journal.journal}: "
                 f"{current_count}/{min_per_journal} candidates..."
             )
             all_candidates.extend(
                 screen_one_journal(
                     client=client,
-                    journal_scope=journal_scope,
+                    journal_scope=journal,
                     per_journal_limit=max(per_journal_limit, min_per_journal * 2),
                     year_from=year_from,
                     year_to=year_to,
@@ -581,6 +616,7 @@ def run_openai_agent_source_screening(
             df=df,
             target_count=target_count,
             min_per_journal=min_per_journal,
+            journal_scope=journal_scope,
         )
 
     if df.empty:
@@ -592,7 +628,7 @@ def run_openai_agent_source_screening(
     covered_journals = set(df["journal"].astype(str))
     missing_journals = [
         scope.journal
-        for scope in MEETING_ONE_JOURNAL_SCOPE
+        for scope in journal_scope
         if scope.journal not in covered_journals
     ]
     if missing_journals:
@@ -601,5 +637,11 @@ def run_openai_agent_source_screening(
             + ", ".join(missing_journals)
         )
 
-    output_paths = write_source_screening_outputs(df)
+    if merge_existing:
+        df = merge_existing_candidates(df)
+
+    output_paths = write_source_screening_outputs(
+        df,
+        journal_scope=journal_scope,
+    )
     return df, output_paths

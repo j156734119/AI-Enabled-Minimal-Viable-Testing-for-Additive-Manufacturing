@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 
 from am_mvt.extraction.batch_extract import (
+    chunk_is_skipped,
     chunk_has_usable_text,
+    load_extraction_skip_stems,
     output_has_error,
     output_needs_pdf_vision,
     select_chunks_for_extraction,
@@ -99,3 +101,13 @@ def test_api_failure_does_not_overwrite_existing_output(tmp_path):
     )
     assert not written
     assert output.read_text(encoding="utf-8") == original
+
+
+def test_configured_pdf_stem_is_skipped(tmp_path):
+    skip_file = tmp_path / "skip.txt"
+    skip_file.write_text("paper_one\n", encoding="utf-8")
+    stems = load_extraction_skip_stems(skip_file)
+    assert chunk_is_skipped(
+        tmp_path / "paper_one_chunk_0000.txt",
+        stems,
+    )

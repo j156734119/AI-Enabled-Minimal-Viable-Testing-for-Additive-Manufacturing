@@ -34,6 +34,7 @@ def make_record(**overrides):
         ({"evidence_text": ""}, "human_review_required"),
         ({"confidence": 0.60}, "human_review_required"),
         ({"needs_human_check": True}, "human_review_required"),
+        ({"alloy_family": "polymer"}, "human_review_required"),
         ({"uts_MPa": 5000}, "rejected"),
         (
             {

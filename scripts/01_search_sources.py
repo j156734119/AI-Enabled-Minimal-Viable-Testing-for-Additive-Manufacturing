@@ -4,6 +4,7 @@ import argparse
 
 from am_mvt.ingestion.llm_source_screening import (
     DEFAULT_SCREENING_MODEL,
+    MEETING_ONE_JOURNAL_SCOPE,
     run_openai_agent_source_screening,
 )
 
@@ -14,6 +15,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Run OpenAI agent web source screening within the approved "
             "additive-manufacturing journal scope."
         )
+    )
+    parser.add_argument(
+        "--journals",
+        nargs="+",
+        choices=[scope.journal for scope in MEETING_ONE_JOURNAL_SCOPE],
+        default=None,
+        help=(
+            "Search only these journals. Quote names containing spaces. "
+            "When omitted, all approved journals are searched."
+        ),
+    )
+    parser.add_argument(
+        "--merge-existing",
+        action="store_true",
+        help=(
+            "Merge new search results into the current canonical candidate "
+            "CSV. Existing records are retained and are not counted against "
+            "--target-count."
+        ),
     )
     parser.add_argument(
         "--target-count",
@@ -64,7 +84,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     print("Step 01: running OpenAI agent web source screening...")
+    if args.journals:
+        print("Selected journals: " + ", ".join(args.journals))
     screened_df, output_paths = run_openai_agent_source_screening(
+        journals=args.journals,
+        merge_existing=args.merge_existing,
         target_count=args.target_count,
         per_journal_limit=args.per_journal_limit,
         min_per_journal=args.min_per_journal,

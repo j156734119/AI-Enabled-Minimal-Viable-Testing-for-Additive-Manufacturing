@@ -15,9 +15,17 @@ from am_mvt.utils.values import is_missing, parse_boolean
 LLM_AUDIT_EXTRA_COLUMNS = [
     "source_title",
     "doi",
+    "journal",
     "page_or_section",
+    "table_or_figure",
     "evidence_text",
     "confidence",
+    "extraction_notes",
+    "powder_feedstock",
+    "specimen_geometry",
+    "test_standard",
+    "strain_rate_s",
+    "runout_cycles",
 ]
 
 

@@ -309,6 +309,25 @@ def _normalise_shap_array(values: Any) -> np.ndarray:
     return array
 
 
+def _tree_shap_array(
+    explainer: Any,
+    explain: Any,
+    *,
+    expected_feature_count: int,
+) -> np.ndarray:
+    values = explainer.shap_values(
+        explain,
+        check_additivity=False,
+    )
+    array = _normalise_shap_array(values)
+    if array.ndim != 2 or array.shape[1] != expected_feature_count:
+        raise ValueError(
+            "Tree SHAP output shape does not match the model input: "
+            f"received {array.shape}, expected (*, {expected_feature_count})."
+        )
+    return array
+
+
 @lru_cache(maxsize=1)
 def shap_import_is_safe() -> bool:
     try:
@@ -455,8 +474,12 @@ def shap_rows(
             numeric_medians=bundle["numeric_medians"],
         )
         explainer = shap.TreeExplainer(model)
-        shap_array = _normalise_shap_array(explainer.shap_values(explain))
         transformed_names = list(explain.columns)
+        shap_array = _tree_shap_array(
+            explainer,
+            explain,
+            expected_feature_count=len(transformed_names),
+        )
         explainer_type = "tree"
     elif hasattr(model, "named_steps"):
         clean_background = clean_features(background_raw, numeric, categorical)
@@ -477,7 +500,11 @@ def shap_rows(
             "XGBRegressor",
         }:
             explainer = shap.TreeExplainer(estimator, data=background)
-            shap_array = _normalise_shap_array(explainer.shap_values(explain))
+            shap_array = _tree_shap_array(
+                explainer,
+                explain,
+                expected_feature_count=len(transformed_names),
+            )
             explainer_type = "tree"
         elif estimator_name in {"SGDRegressor", "Ridge", "LinearRegression"}:
             explainer = shap.LinearExplainer(estimator, background)
@@ -495,7 +522,11 @@ def shap_rows(
         estimator_name = model.__class__.__name__
         if estimator_name in {"RandomForestRegressor", "XGBRegressor"}:
             explainer = shap.TreeExplainer(model, data=background)
-            shap_array = _normalise_shap_array(explainer.shap_values(explain))
+            shap_array = _tree_shap_array(
+                explainer,
+                explain,
+                expected_feature_count=len(original_features),
+            )
             explainer_type = "tree"
         else:
             explainer = shap.SamplingExplainer(model.predict, background)

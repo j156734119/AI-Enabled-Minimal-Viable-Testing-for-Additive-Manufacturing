@@ -91,9 +91,12 @@ FINGERPRINT_COLUMNS = list(
         + [
             "source_title",
             "doi",
+            "journal",
             "page_or_section",
+            "table_or_figure",
             "evidence_text",
             "confidence",
+            "extraction_notes",
         ]
     )
 )
@@ -195,6 +198,15 @@ def audit_record(row: pd.Series) -> dict[str, str]:
         reasons.append("needs_human_check:not_boolean")
     elif needs_human_check:
         reasons.append("needs_human_check:true")
+
+    alloy_family_value = row.get("alloy_family")
+    alloy_family = (
+        ""
+        if is_missing(alloy_family_value)
+        else str(alloy_family_value).strip().lower()
+    )
+    if alloy_family == "polymer":
+        reasons.append("outside_current_metal_am_scope")
 
     if reasons:
         return {

@@ -68,6 +68,8 @@ def test_step01_defaults_to_openai_agent_search(monkeypatch):
         module,
         "parse_args",
         lambda: argparse.Namespace(
+            journals=None,
+            merge_existing=False,
             target_count=50,
             per_journal_limit=8,
             min_per_journal=1,
@@ -88,12 +90,107 @@ def test_step01_defaults_to_openai_agent_search(monkeypatch):
     assert len(calls) == 1
     assert calls[0]["model"] == "test-model"
     assert calls[0]["min_per_journal"] == 1
+    assert calls[0]["journals"] is None
+    assert calls[0]["merge_existing"] is False
 
 
 def test_step01_cli_defaults_to_one_candidate_per_journal(monkeypatch):
     module = load_step01_module()
     monkeypatch.setattr(sys, "argv", ["01_search_sources.py"])
     assert module.parse_args().min_per_journal == 1
+
+
+def test_step01_accepts_explicit_journal_subset():
+    module = load_step01_module()
+    args = module.parse_args(
+        ["--journals", "Metals", "Additive Manufacturing"]
+    )
+    assert args.journals == ["Metals", "Additive Manufacturing"]
+
+
+def test_step01_accepts_merge_existing():
+    module = load_step01_module()
+    args = module.parse_args(["--journals", "Metals", "--merge-existing"])
+    assert args.journals == ["Metals"]
+    assert args.merge_existing is True
+
+
+def test_explicit_journal_subset_only_calls_requested_journal(monkeypatch):
+    calls = []
+    monkeypatch.setattr(llm_source_screening, "get_client", lambda: object())
+    monkeypatch.setattr(
+        llm_source_screening,
+        "screen_one_journal",
+        lambda **kwargs: (
+            calls.append(kwargs["journal_scope"].journal)
+            or [
+                {
+                    "title": "Metal AM tensile data",
+                    "journal": kwargs["journal_scope"].journal,
+                    "year": 2025,
+                    "selection_score": 9,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        llm_source_screening,
+        "write_source_screening_outputs",
+        lambda df, **kwargs: {
+            "interim": "a.csv",
+            "table": "b.csv",
+            "journal_scope": "c.csv",
+        },
+    )
+
+    result, _ = llm_source_screening.run_openai_agent_source_screening(
+        journals=["Metals"],
+        target_count=2,
+        search_rounds=1,
+    )
+
+    assert calls == ["Metals"]
+    assert set(result["journal"]) == {"Metals"}
+
+
+def test_merge_existing_retains_old_candidates(tmp_path, monkeypatch):
+    existing_path = tmp_path / "data" / "interim" / "candidate_sources_llm.csv"
+    existing_path.parent.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "source_id": "old",
+                "title": "Existing fatigue paper",
+                "journal": "Additive Manufacturing",
+                "doi": "10.1000/old",
+                "download_status": "downloaded",
+            }
+        ]
+    ).to_csv(existing_path, index=False)
+    monkeypatch.setattr(
+        llm_source_screening,
+        "get_path",
+        lambda *parts: tmp_path.joinpath(*parts),
+    )
+    new = pd.DataFrame(
+        [
+            {
+                "source_id": "new",
+                "title": "New Metals paper",
+                "journal": "Metals",
+                "doi": "10.1000/new",
+                "download_status": "not_downloaded",
+            }
+        ]
+    )
+
+    merged = llm_source_screening.merge_existing_candidates(new)
+
+    assert set(merged["source_id"]) == {"old", "new"}
+    assert (
+        merged.set_index("source_id").loc["old", "download_status"]
+        == "downloaded"
+    )
 
 
 def test_metals_prompt_uses_journal_specific_mdpi_path():

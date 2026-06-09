@@ -11,6 +11,8 @@ from am_mvt.extraction.openai_extractor import (
     extract_records_from_pdf,
 )
 
+DEFAULT_SKIP_FILE = Path("config/llm_extraction_skip.txt")
+
 
 def infer_source_pdf_from_chunk_name(chunk_path: Path) -> str:
     name = chunk_path.stem
@@ -20,6 +22,26 @@ def infer_source_pdf_from_chunk_name(chunk_path: Path) -> str:
         return source_name if source_name.lower().endswith(".pdf") else source_name + ".pdf"
 
     return name if name.lower().endswith(".pdf") else name + ".pdf"
+
+
+def load_extraction_skip_stems(
+    skip_file: str | Path = DEFAULT_SKIP_FILE,
+) -> set[str]:
+    path = Path(skip_file)
+    if not path.exists():
+        return set()
+    return {
+        line.strip().removesuffix(".pdf")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
+def chunk_is_skipped(chunk_path: Path, skip_stems: set[str]) -> bool:
+    source_stem = infer_source_pdf_from_chunk_name(chunk_path).removesuffix(
+        ".pdf"
+    )
+    return source_stem in skip_stems
 
 
 def output_has_error(output_path: Path) -> bool:
@@ -122,8 +144,21 @@ def run_batch_extraction(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     all_chunk_files = sorted(chunk_dir.glob("*.txt"))
+    skip_stems = load_extraction_skip_stems()
+    skipped_by_policy = [
+        path for path in all_chunk_files if chunk_is_skipped(path, skip_stems)
+    ]
+    all_chunk_files = [
+        path for path in all_chunk_files if not chunk_is_skipped(path, skip_stems)
+    ]
 
     output_paths: list[Path] = []
+
+    if skipped_by_policy:
+        print(
+            "Chunks skipped by config/llm_extraction_skip.txt: "
+            f"{len(skipped_by_policy)}"
+        )
 
     if not all_chunk_files:
         print("No text chunks found for LLM extraction.")
