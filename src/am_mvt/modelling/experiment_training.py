@@ -13,7 +13,8 @@ import xgboost as xgb
 from sklearn.base import clone
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import SGDRegressor
+from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
 from xgboost import XGBRegressor
 
@@ -103,14 +104,16 @@ def get_model_candidates(profile: str) -> dict[str, dict[str, Any]]:
             "model": DummyRegressor(strategy="median"),
         },
         "alloy_family_median": {"kind": "alloy_median"},
-        "ridge": {
+        "linear_l2_sgd": {
             "kind": "sklearn",
-            "model": Ridge(
-                alpha=1.0,
-                solver="sag",
-                max_iter=3000,
+            "model": SGDRegressor(
+                loss="squared_error",
+                penalty="l2",
+                alpha=1e-4,
+                max_iter=2000,
                 tol=1e-3,
                 random_state=42,
+                average=True,
             ),
         },
         "random_forest": {
@@ -153,6 +156,25 @@ def get_model_candidates(profile: str) -> dict[str, dict[str, Any]]:
             ).items()
         }
     )
+    if bool(profile_config.get("include_mlp", False)):
+        candidates["mlp_128_64_32"] = {
+            "kind": "sklearn",
+            "dense": True,
+            "accepts_sample_weight": False,
+            "model": MLPRegressor(
+                hidden_layer_sizes=(128, 64, 32),
+                activation="relu",
+                solver="adam",
+                alpha=1e-4,
+                batch_size=128,
+                learning_rate_init=1e-3,
+                max_iter=400,
+                early_stopping=True,
+                validation_fraction=0.15,
+                n_iter_no_change=20,
+                random_state=42,
+            ),
+        }
     return candidates
 
 
@@ -370,7 +392,7 @@ def fit_candidate(
     preprocessor = build_preprocessor(
         numeric_features,
         categorical_features,
-        sparse=True,
+        sparse=not bool(candidate.get("dense", False)),
     )
     pipeline = Pipeline(
         [
@@ -386,7 +408,10 @@ def fit_candidate(
         categorical_features,
     )
     fit_params = {}
-    if not isinstance(candidate["model"], (Ridge, DummyRegressor)):
+    if (
+        not isinstance(candidate["model"], DummyRegressor)
+        and candidate.get("accepts_sample_weight", True)
+    ):
         sample_weight = get_sample_weight(train_df)
         if sample_weight is not None:
             fit_params["model__sample_weight"] = sample_weight
@@ -459,6 +484,16 @@ def split_audit_fields(
     }
 
 
+def select_candidate_by_oof(candidate_summary: pd.DataFrame) -> str:
+    return str(
+        candidate_summary.sort_values(
+            ["oof_r2", "oof_rmse", "oof_mae"],
+            ascending=[False, True, True],
+            na_position="last",
+        ).iloc[0]["candidate"]
+    )
+
+
 def train_conventional_experiment(
     model_key: str,
     target: str,
@@ -486,6 +521,21 @@ def train_conventional_experiment(
         test_groups=final_holdout_groups,
     )
     assert_disjoint_groups(development_df, test_df)
+    print(
+        "    Data rows: "
+        f"total={len(frame)}, development={len(development_df)}, "
+        f"final_test={len(test_df)}"
+    )
+    print(
+        "    Evidence groups: "
+        f"development={development_df['evaluation_group_id'].nunique()}, "
+        f"final_test={test_df['evaluation_group_id'].nunique()}"
+    )
+    print(
+        "    Features: "
+        f"numeric={len(numeric_features)}, "
+        f"categorical={len(categorical_features)}"
+    )
     folds = make_group_folds(development_df, n_splits=n_splits)
     candidates = get_model_candidates(profile)
     cv_rows: list[dict[str, Any]] = []
@@ -536,9 +586,23 @@ def train_conventional_experiment(
         else column
         for column in candidate_summary.columns
     ]
-    selected_name = str(
-        candidate_summary.sort_values("mae_mean").iloc[0]["candidate"]
+    oof_rows = []
+    for candidate_name, predictions in oof_predictions.items():
+        oof_metrics = regression_metrics(development_df[target], predictions)
+        oof_rows.append(
+            {
+                "candidate": candidate_name,
+                "oof_mae": oof_metrics["mae"],
+                "oof_rmse": oof_metrics["rmse"],
+                "oof_r2": oof_metrics["r2"],
+            }
+        )
+    candidate_summary = candidate_summary.merge(
+        pd.DataFrame(oof_rows),
+        on="candidate",
+        how="left",
     )
+    selected_name = select_candidate_by_oof(candidate_summary)
     selected_candidate = candidates[selected_name]
     conformal_q = conformal_radius(
         development_df[target],
@@ -610,6 +674,9 @@ def train_conventional_experiment(
                 "cv_rmse_std": row["rmse_std"],
                 "cv_r2_mean": row["r2_mean"],
                 "cv_r2_std": row["r2_std"],
+                "oof_mae": row["oof_mae"],
+                "oof_rmse": row["oof_rmse"],
+                "oof_r2": row["oof_r2"],
                 "selected": row["candidate"] == selected_name,
                 "test_mae": test_metrics["mae"]
                 if row["candidate"] == selected_name
@@ -1279,10 +1346,10 @@ def write_run_configuration(
         "profile_parameters": profile_config,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "random_state": 42,
-        "test_fraction": 0.2,
+        "test_fraction": 0.15,
         "cv": f"{n_splits}-fold GroupKFold",
         "grouping": "DOI first, then dataset_id, then source_id",
-        "selection_metric": "mean CV MAE",
+        "selection_metric": "grouped-CV OOF R2; RMSE and MAE tie-breakers",
         "fatigue_stress_amplitude_bounds_MPa": [1.0, 3000.0],
         "ordinary_fatigue_subset": "uncensored failures",
         "prediction_modes": selected_modes(mode),
@@ -1302,7 +1369,7 @@ def write_run_configuration(
 
 def run_experiment_suite(
     run_name: str,
-    profile: str = "fast",
+    profile: str = "balanced",
     n_splits: int | None = None,
     mode: str = "process_only",
 ) -> Path:

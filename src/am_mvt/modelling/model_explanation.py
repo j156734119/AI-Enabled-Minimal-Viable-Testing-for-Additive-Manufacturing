@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+from functools import lru_cache
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -11,6 +14,7 @@ import pandas as pd
 
 from am_mvt.modelling.experiment_config import get_experiment_config
 from am_mvt.modelling.experiment_data import (
+    clean_features,
     load_experiment_frame,
     select_final_holdout_groups,
     split_development_and_test,
@@ -19,7 +23,9 @@ from am_mvt.modelling.experiment_inference import predict_ordinary
 from am_mvt.modelling.experiment_metrics import regression_metrics
 from am_mvt.modelling.experiment_training import (
     filter_valid_fatigue_loading,
+    get_model_candidates,
     normalise_runout,
+    refit_candidate_on_development,
 )
 
 
@@ -36,6 +42,13 @@ SENSITIVITY_FEATURES = [
     "relative_density_percent",
     "stress_amplitude_MPa",
     "build_orientation",
+]
+
+COMBINATION_COLUMNS = [
+    "alloy_family",
+    "am_process",
+    "build_orientation",
+    "surface_condition",
 ]
 
 
@@ -234,6 +247,420 @@ def coverage_rows(
         )
 
     return pd.DataFrame(rows)
+
+
+def combination_coverage_rows(
+    bundle: dict[str, Any],
+    frame: pd.DataFrame,
+) -> pd.DataFrame:
+    available = [column for column in COMBINATION_COLUMNS if column in frame]
+    if not available:
+        return pd.DataFrame()
+    grouped = frame.copy()
+    for column in available:
+        grouped[column] = (
+            grouped[column].astype("string").fillna("missing").replace("", "missing")
+        )
+    rows = []
+    for values, group in grouped.groupby(available, dropna=False):
+        if not isinstance(values, tuple):
+            values = (values,)
+        row = {
+            "model_key": bundle["model_key"],
+            "target": bundle["target"],
+            "mode": bundle["mode"],
+            **dict(zip(available, values, strict=False)),
+            "rows": len(group),
+            "source_count": int(group["source_id"].nunique(dropna=True))
+            if "source_id" in group
+            else 0,
+            "group_count": int(group["evaluation_group_id"].nunique(dropna=True)),
+        }
+        row["coverage_level"] = (
+            "adequate"
+            if row["rows"] >= 30 and row["source_count"] >= 3
+            else "limited"
+            if row["rows"] >= 10 and row["source_count"] >= 2
+            else "sparse"
+        )
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values("rows", ascending=False)
+
+
+def _original_feature_name(
+    transformed_name: str,
+    original_features: list[str],
+) -> str:
+    name = transformed_name.split("__", 1)[-1]
+    for feature in sorted(original_features, key=len, reverse=True):
+        if name == feature or name.startswith(feature + "_"):
+            return feature
+    return name
+
+
+def _normalise_shap_array(values: Any) -> np.ndarray:
+    if hasattr(values, "values"):
+        values = values.values
+    if isinstance(values, list):
+        values = values[0]
+    array = np.asarray(values, dtype=float)
+    if array.ndim == 3:
+        array = array[..., 0]
+    return array
+
+
+@lru_cache(maxsize=1)
+def shap_import_is_safe() -> bool:
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import shap"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def fallback_shap_rows(
+    bundle: dict[str, Any],
+    background_raw: pd.DataFrame,
+    explain_raw: pd.DataFrame,
+    original_features: list[str],
+    *,
+    permutations: int = 8,
+    random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    reference: dict[str, Any] = {}
+    numeric = set(bundle["numeric_features"])
+    for feature in original_features:
+        if feature in numeric:
+            values = pd.to_numeric(
+                background_raw[feature],
+                errors="coerce",
+            ).dropna()
+            reference[feature] = float(values.median()) if len(values) else np.nan
+        else:
+            values = background_raw[feature].dropna().astype(str)
+            reference[feature] = (
+                values.mode().iloc[0] if len(values) else "missing"
+            )
+
+    rng = np.random.default_rng(random_state)
+    contributions = np.zeros(
+        (len(explain_raw), len(original_features)),
+        dtype=float,
+    )
+    for _ in range(permutations):
+        order = rng.permutation(len(original_features))
+        working = explain_raw.copy()
+        for feature in original_features:
+            working[feature] = reference[feature]
+        previous = predict_ordinary(bundle, working)
+        for feature_index in order:
+            feature = original_features[feature_index]
+            working[feature] = explain_raw[feature].to_numpy(copy=True)
+            current = predict_ordinary(bundle, working)
+            contributions[:, feature_index] += current - previous
+            previous = current
+    contributions /= permutations
+
+    sample_rows = [
+        {
+            "model_key": bundle["model_key"],
+            "target": bundle["target"],
+            "mode": bundle["mode"],
+            "candidate": bundle["candidate"],
+            "explainer_type": "monte_carlo_shapley_fallback",
+            "sample_index": sample_index,
+            "feature": feature,
+            "shap_value": float(contributions[sample_index, feature_index]),
+        }
+        for sample_index in range(len(explain_raw))
+        for feature_index, feature in enumerate(original_features)
+    ]
+    samples = pd.DataFrame(sample_rows)
+    importance = (
+        samples.groupby(
+            ["model_key", "target", "mode", "candidate", "explainer_type", "feature"],
+            as_index=False,
+        )
+        .agg(
+            mean_abs_shap=("shap_value", lambda values: float(np.abs(values).mean())),
+            mean_shap=("shap_value", "mean"),
+            explained_rows=("sample_index", "nunique"),
+        )
+        .sort_values("mean_abs_shap", ascending=False)
+    )
+    totals = importance.groupby("target")["mean_abs_shap"].transform("sum")
+    importance["shap_importance_fraction"] = np.where(
+        totals > 0,
+        importance["mean_abs_shap"] / totals,
+        0.0,
+    )
+    return importance, samples
+
+
+def shap_rows(
+    bundle: dict[str, Any],
+    frame: pd.DataFrame,
+    *,
+    background_rows: int = 30,
+    explain_rows: int = 40,
+    random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    numeric = list(bundle["numeric_features"])
+    categorical = list(bundle["categorical_features"])
+    original_features = numeric + categorical
+    sampled = frame.sample(
+        n=min(len(frame), background_rows + explain_rows),
+        random_state=random_state,
+    ).reset_index(drop=True)
+    background_raw = sampled.iloc[: min(background_rows, len(sampled))]
+    explain_raw = sampled.iloc[
+        min(background_rows, len(sampled)) :
+        min(background_rows + explain_rows, len(sampled))
+    ]
+    if explain_raw.empty:
+        explain_raw = background_raw.copy()
+
+    if not shap_import_is_safe():
+        return fallback_shap_rows(
+            bundle,
+            background_raw,
+            explain_raw,
+            original_features,
+            random_state=random_state,
+        )
+
+    import shap
+
+    kind = bundle["kind"]
+    model = bundle["model"]
+    if kind == "catboost":
+        from am_mvt.modelling.experiment_data import catboost_frame
+
+        background, _ = catboost_frame(
+            background_raw,
+            numeric,
+            categorical,
+            numeric_medians=bundle["numeric_medians"],
+        )
+        explain, _ = catboost_frame(
+            explain_raw,
+            numeric,
+            categorical,
+            numeric_medians=bundle["numeric_medians"],
+        )
+        explainer = shap.TreeExplainer(model)
+        shap_array = _normalise_shap_array(explainer.shap_values(explain))
+        transformed_names = list(explain.columns)
+        explainer_type = "tree"
+    elif hasattr(model, "named_steps"):
+        clean_background = clean_features(background_raw, numeric, categorical)
+        clean_explain = clean_features(explain_raw, numeric, categorical)
+        preprocessor = model.named_steps["preprocessor"]
+        estimator = model.named_steps["model"]
+        background = preprocessor.transform(clean_background[original_features])
+        explain = preprocessor.transform(clean_explain[original_features])
+        if hasattr(background, "toarray"):
+            background = background.toarray()
+        if hasattr(explain, "toarray"):
+            explain = explain.toarray()
+        transformed_names = list(preprocessor.get_feature_names_out())
+        estimator_name = estimator.__class__.__name__
+        if estimator_name in {
+            "RandomForestRegressor",
+            "ExtraTreesRegressor",
+            "XGBRegressor",
+        }:
+            explainer = shap.TreeExplainer(estimator, data=background)
+            shap_array = _normalise_shap_array(explainer.shap_values(explain))
+            explainer_type = "tree"
+        elif estimator_name in {"SGDRegressor", "Ridge", "LinearRegression"}:
+            explainer = shap.LinearExplainer(estimator, background)
+            shap_array = _normalise_shap_array(explainer.shap_values(explain))
+            explainer_type = "linear"
+        else:
+            explainer = shap.SamplingExplainer(estimator.predict, background)
+            shap_array = _normalise_shap_array(
+                explainer.shap_values(explain, nsamples=100)
+            )
+            explainer_type = "sampling"
+    else:
+        background = background_raw[original_features]
+        explain = explain_raw[original_features]
+        estimator_name = model.__class__.__name__
+        if estimator_name in {"RandomForestRegressor", "XGBRegressor"}:
+            explainer = shap.TreeExplainer(model, data=background)
+            shap_array = _normalise_shap_array(explainer.shap_values(explain))
+            explainer_type = "tree"
+        else:
+            explainer = shap.SamplingExplainer(model.predict, background)
+            shap_array = _normalise_shap_array(
+                explainer.shap_values(explain, nsamples=100)
+            )
+            explainer_type = "sampling"
+        transformed_names = original_features
+
+    original_names = [
+        _original_feature_name(name, original_features)
+        for name in transformed_names
+    ]
+    sample_rows = []
+    for sample_index in range(shap_array.shape[0]):
+        aggregated: dict[str, float] = {}
+        for feature, value in zip(
+            original_names,
+            shap_array[sample_index],
+            strict=False,
+        ):
+            aggregated[feature] = aggregated.get(feature, 0.0) + float(value)
+        for feature, value in aggregated.items():
+            sample_rows.append(
+                {
+                    "model_key": bundle["model_key"],
+                    "target": bundle["target"],
+                    "mode": bundle["mode"],
+                    "candidate": bundle["candidate"],
+                    "explainer_type": explainer_type,
+                    "sample_index": sample_index,
+                    "feature": feature,
+                    "shap_value": value,
+                }
+            )
+    samples = pd.DataFrame(sample_rows)
+    importance = (
+        samples.groupby(
+            ["model_key", "target", "mode", "candidate", "explainer_type", "feature"],
+            as_index=False,
+        )
+        .agg(
+            mean_abs_shap=("shap_value", lambda values: float(np.abs(values).mean())),
+            mean_shap=("shap_value", "mean"),
+            explained_rows=("sample_index", "nunique"),
+        )
+        .sort_values("mean_abs_shap", ascending=False)
+    )
+    totals = importance.groupby("target")["mean_abs_shap"].transform("sum")
+    importance["shap_importance_fraction"] = np.where(
+        totals > 0,
+        importance["mean_abs_shap"] / totals,
+        0.0,
+    )
+    return importance, samples
+
+
+def compare_feature_importance(
+    permutation: pd.DataFrame,
+    shap_importance: pd.DataFrame,
+) -> pd.DataFrame:
+    comparison = permutation.merge(
+        shap_importance[
+            [
+                "model_key",
+                "target",
+                "mode",
+                "feature",
+                "mean_abs_shap",
+                "mean_shap",
+                "shap_importance_fraction",
+            ]
+        ],
+        on=["model_key", "target", "mode", "feature"],
+        how="outer",
+    )
+    permutation_positive = (
+        comparison["permutation_mae_increase_mean"].fillna(0) > 0
+    )
+    shap_positive = comparison["mean_abs_shap"].fillna(0) > 0
+    comparison["evidence_stability"] = np.select(
+        [
+            permutation_positive & shap_positive,
+            permutation_positive,
+            shap_positive,
+        ],
+        ["supported_by_both", "permutation_only", "shap_only"],
+        default="weak_or_unstable",
+    )
+    return comparison
+
+
+def b2_combination_diagnostic(
+    bundle: dict[str, Any],
+    frame: pd.DataFrame,
+    *,
+    profile: str,
+) -> pd.DataFrame:
+    available = [column for column in COMBINATION_COLUMNS[:3] if column in frame]
+    if len(available) < 3:
+        return pd.DataFrame()
+    prepared = frame.copy()
+    for column in available:
+        prepared[column] = (
+            prepared[column].astype("string").fillna("missing").replace("", "missing")
+        )
+    counts = (
+        prepared.groupby(available, dropna=False)
+        .agg(
+            rows=(bundle["target"], "size"),
+            group_count=("evaluation_group_id", "nunique"),
+        )
+        .reset_index()
+    )
+    eligible = counts.loc[
+        counts["rows"].ge(20)
+        & counts["group_count"].ge(2)
+        & counts["rows"].lt(len(prepared) * 0.5)
+    ].sort_values(["rows", "group_count"], ascending=False)
+    if eligible.empty:
+        return pd.DataFrame()
+    selected = eligible.iloc[0]
+    mask = pd.Series(True, index=prepared.index)
+    for column in available:
+        mask &= prepared[column].eq(selected[column])
+    train_df = prepared.loc[~mask].reset_index(drop=True)
+    test_df = prepared.loc[mask].reset_index(drop=True)
+    candidate = get_model_candidates(profile).get(bundle["candidate"])
+    if candidate is None or len(train_df) < 20:
+        return pd.DataFrame()
+    diagnostic_bundle = refit_candidate_on_development(
+        candidate,
+        train_df,
+        bundle["target"],
+        bundle["numeric_features"],
+        bundle["categorical_features"],
+    )
+    diagnostic_bundle.update(
+        {
+            "numeric_features": bundle["numeric_features"],
+            "categorical_features": bundle["categorical_features"],
+        }
+    )
+    predictions = predict_ordinary(diagnostic_bundle, test_df)
+    metrics = regression_metrics(test_df[bundle["target"]], predictions)
+    return pd.DataFrame(
+        [
+            {
+                "model_key": bundle["model_key"],
+                "target": bundle["target"],
+                "mode": bundle["mode"],
+                "candidate": bundle["candidate"],
+                **{column: selected[column] for column in available},
+                "train_rows": len(train_df),
+                "test_rows": len(test_df),
+                "test_groups": int(test_df["evaluation_group_id"].nunique()),
+                **metrics,
+                "diagnostic_only": True,
+                "interpretation_warning": (
+                    "Single well-covered combination holdout; not evidence of "
+                    "broad domain generalisation."
+                ),
+            }
+        ]
+    )
 
 
 def sensitivity_rows(
@@ -506,7 +933,13 @@ def relationship_evidence_rows(
     )
 
 
-def plot_feature_importance(df: pd.DataFrame, output_path: Path) -> None:
+def plot_feature_importance(
+    df: pd.DataFrame,
+    output_path: Path,
+    *,
+    value_column: str = "permutation_mae_increase_mean",
+    axis_label: str = "Holdout MAE increase after permutation",
+) -> None:
     targets = list(df["target"].drop_duplicates())
     panel_height = 300
     width = 1000
@@ -523,8 +956,8 @@ def plot_feature_importance(df: pd.DataFrame, output_path: Path) -> None:
     for panel_index, target in enumerate(targets):
         selected = (
             df.loc[df["target"].eq(target)]
-            .nlargest(10, "permutation_mae_increase_mean")
-            .sort_values("permutation_mae_increase_mean")
+            .nlargest(10, value_column)
+            .sort_values(value_column)
         )
         top = panel_index * panel_height
         parts.append(
@@ -532,20 +965,20 @@ def plot_feature_importance(df: pd.DataFrame, output_path: Path) -> None:
             f"{escape(str(target))}</text>"
         )
         max_value = max(
-            float(selected["permutation_mae_increase_mean"].max()),
+            float(selected[value_column].max()),
             1e-12,
         )
 
-        for row_index, row in enumerate(selected.itertuples(index=False)):
+        for row_index, (_, row) in enumerate(selected.iterrows()):
             y = top + 52 + row_index * 22
             value = max(
-                float(row.permutation_mae_increase_mean),
+                float(row[value_column]),
                 0.0,
             )
             bar_width = 550 * value / max_value
             parts.append(
                 f'<text class="label" x="20" y="{y + 12}">'
-                f"{escape(str(row.feature))}</text>"
+                f"{escape(str(row['feature']))}</text>"
             )
             parts.append(
                 f'<rect x="235" y="{y}" width="{bar_width:.2f}" '
@@ -558,7 +991,7 @@ def plot_feature_importance(df: pd.DataFrame, output_path: Path) -> None:
 
         parts.append(
             f'<text class="axis" x="235" y="{top + 286}">'
-            "Holdout MAE increase after permutation</text>"
+            f"{escape(axis_label)}</text>"
         )
 
     parts.append("</svg>")
@@ -677,6 +1110,17 @@ def plot_sensitivity(df: pd.DataFrame, output_path: Path) -> None:
     output_path.write_text("\n".join(parts), encoding="utf-8")
 
 
+def plot_shap_importance(df: pd.DataFrame, output_path: Path) -> None:
+    if df.empty:
+        return
+    plot_feature_importance(
+        df,
+        output_path,
+        value_column="mean_abs_shap",
+        axis_label="Mean absolute SHAP value",
+    )
+
+
 def run_model_explanation(
     run_dir: str | Path,
     *,
@@ -691,7 +1135,18 @@ def run_model_explanation(
     importance_parts = []
     error_parts = []
     coverage_parts = []
+    combination_coverage_parts = []
     sensitivity_parts = []
+    shap_importance_parts = []
+    shap_sample_parts = []
+    b2_parts = []
+    run_config_path = run_dir / "run_config.json"
+    run_config = (
+        json.loads(run_config_path.read_text(encoding="utf-8"))
+        if run_config_path.exists()
+        else {}
+    )
+    profile = str(run_config.get("profile", "balanced"))
 
     for entry in ordinary_entries(run_dir, mode):
         bundle = joblib.load(run_dir / entry["artifact"])
@@ -709,12 +1164,39 @@ def run_model_explanation(
         )
         error_parts.append(grouped_error_rows(bundle, test_df))
         coverage_parts.append(coverage_rows(bundle, frame))
+        combination_coverage_parts.append(
+            combination_coverage_rows(bundle, frame)
+        )
         sensitivity_parts.append(sensitivity_rows(bundle, test_df))
+        shap_importance, shap_samples = shap_rows(bundle, test_df)
+        shap_importance_parts.append(shap_importance)
+        shap_sample_parts.append(shap_samples)
+        b2_parts.append(
+            b2_combination_diagnostic(
+                bundle,
+                frame,
+                profile=profile,
+            )
+        )
 
     importance = pd.concat(importance_parts, ignore_index=True)
     errors = pd.concat(error_parts, ignore_index=True)
     coverage = pd.concat(coverage_parts, ignore_index=True)
+    combination_coverage = pd.concat(
+        combination_coverage_parts,
+        ignore_index=True,
+    )
     sensitivity = pd.concat(sensitivity_parts, ignore_index=True)
+    shap_importance = pd.concat(shap_importance_parts, ignore_index=True)
+    shap_samples = pd.concat(shap_sample_parts, ignore_index=True)
+    b2_diagnostics = pd.concat(
+        [frame for frame in b2_parts if not frame.empty],
+        ignore_index=True,
+    ) if any(not frame.empty for frame in b2_parts) else pd.DataFrame()
+    importance_comparison = compare_feature_importance(
+        importance,
+        shap_importance,
+    )
     relationships = relationship_evidence_rows(
         run_dir,
         importance,
@@ -724,9 +1206,19 @@ def run_model_explanation(
         "feature_importance": table_dir / "feature_importance.csv",
         "grouped_error_analysis": table_dir / "grouped_error_analysis.csv",
         "variable_coverage": table_dir / "variable_coverage.csv",
+        "combination_coverage": table_dir / "combination_coverage.csv",
         "sensitivity_analysis": table_dir / "sensitivity_analysis.csv",
+        "shap_importance": table_dir / "shap_importance.csv",
+        "shap_values_sample": table_dir / "shap_values_sample.csv",
+        "feature_importance_comparison": (
+            table_dir / "feature_importance_comparison.csv"
+        ),
+        "b2_combination_diagnostics": (
+            table_dir / "b2_combination_diagnostics.csv"
+        ),
         "relationship_evidence": table_dir / "relationship_evidence.csv",
         "feature_importance_figure": figure_dir / "feature_importance.svg",
+        "shap_summary_figure": figure_dir / "shap_summary.svg",
         "sensitivity_figure": figure_dir / "sensitivity_analysis.svg",
     }
 
@@ -734,11 +1226,17 @@ def run_model_explanation(
         (importance, "feature_importance"),
         (errors, "grouped_error_analysis"),
         (coverage, "variable_coverage"),
+        (combination_coverage, "combination_coverage"),
         (sensitivity, "sensitivity_analysis"),
+        (shap_importance, "shap_importance"),
+        (shap_samples, "shap_values_sample"),
+        (importance_comparison, "feature_importance_comparison"),
+        (b2_diagnostics, "b2_combination_diagnostics"),
         (relationships, "relationship_evidence"),
     ]:
         frame.to_csv(outputs[key], index=False, encoding="utf-8-sig")
 
     plot_feature_importance(importance, outputs["feature_importance_figure"])
+    plot_shap_importance(shap_importance, outputs["shap_summary_figure"])
     plot_sensitivity(sensitivity, outputs["sensitivity_figure"])
     return outputs

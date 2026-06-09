@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -66,22 +67,34 @@ def select_usable_features(
     df: pd.DataFrame,
     numeric_features: list[str],
     categorical_features: list[str],
+    min_non_missing: int | None = None,
 ) -> tuple[list[str], list[str]]:
     numeric = []
     categorical = []
+    required_non_missing = (
+        min_non_missing
+        if min_non_missing is not None
+        else max(20, math.ceil(len(df) * 0.01))
+    )
 
     for column in numeric_features:
         if column not in df.columns:
             continue
         values = pd.to_numeric(df[column], errors="coerce")
-        if values.notna().sum() and values.nunique(dropna=True) > 1:
+        if (
+            values.notna().sum() >= required_non_missing
+            and values.nunique(dropna=True) > 1
+        ):
             numeric.append(column)
 
     for column in categorical_features:
         if column not in df.columns:
             continue
         values = df[column].astype("string").str.strip().replace("", pd.NA)
-        if values.notna().sum() and values.nunique(dropna=True) > 1:
+        if (
+            values.notna().sum() >= required_non_missing
+            and values.nunique(dropna=True) > 1
+        ):
             categorical.append(column)
 
     return numeric, categorical
@@ -165,7 +178,7 @@ def build_preprocessor(
 
 def split_development_and_test(
     df: pd.DataFrame,
-    test_size: float = 0.2,
+    test_size: float = 0.15,
     random_state: int = 42,
     test_groups: set[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:

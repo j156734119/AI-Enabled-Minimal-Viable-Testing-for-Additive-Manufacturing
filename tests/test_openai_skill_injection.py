@@ -36,6 +36,26 @@ def test_extraction_request_injects_skill_and_json_schema(monkeypatch):
     assert request["text"]["format"]["strict"] is True
 
 
+def test_pdf_vision_request_uses_responses_input_file(tmp_path, monkeypatch):
+    client = FakeClient('{"records": []}')
+    monkeypatch.setattr(openai_extractor, "get_openai_client", lambda: client)
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 test")
+
+    result = openai_extractor.extract_records_from_pdf(
+        pdf_path,
+        source_file="scan.pdf",
+        chunk_id="scan_chunk_0000",
+        max_retries=1,
+    )
+
+    content = client.responses.kwargs["input"][1]["content"]
+    file_item = next(item for item in content if item["type"] == "input_file")
+    assert file_item["filename"] == "scan.pdf"
+    assert file_item["file_data"].startswith("data:application/pdf;base64,")
+    assert result["_metadata"]["input_mode"] == "pdf_vision"
+
+
 def test_source_screening_request_injects_skill_and_web_search():
     client = FakeClient('{"candidates": []}')
     scope = llm_source_screening.MEETING_ONE_JOURNAL_SCOPE[0]

@@ -45,7 +45,6 @@ Surface condition
 Processing parameters
 Porosity metrics
 Defect type
-Residual stress indicators
 Process signatures
 
 ## Example output variables:
@@ -56,11 +55,11 @@ Process signatures
 - Fatigue life in cycles
 - Log-transformed fatigue life
 - Young's / elastic modulus
-- Hardness
 
-Failure mode is retained only as a possible future extension. The reviewed
-public datasets do not provide consistent structured labels, so it is not used
-as a current modelling target or feature.
+Failure mode, fracture origin, hardness, and residual stress are retained only
+as future extensions. The reviewed data do not provide sufficiently consistent
+structured coverage for these variables, so they are not current modelling
+targets or features.
 
 ## Current Modelling Tasks
 
@@ -77,9 +76,11 @@ Model 4: Young's / elastic modulus prediction
 measured mechanical properties. `reduced_testing` may use selected measured
 properties and is reported as an auxiliary or diagnostic result.
 
-The default CPU-oriented `fast` profile runs only `process_only` with
-three-fold GroupKFold. It compares mean, median, alloy-family median, Ridge,
-Random Forest, XGBoost, and one lightweight CatBoost configuration. The
+The default `balanced` profile runs only `process_only` with five-fold
+GroupKFold. It compares mean, median, alloy-family median, an L2-regularised
+SGD linear baseline, Random Forest, XGBoost, one lightweight CatBoost
+configuration, and a three-layer MLP neural-network baseline. The
+CPU-oriented `fast` profile uses three folds and omits the MLP. The
 optional `standard` profile retains four conservative CatBoost configurations,
 five-fold CV, and either or both prediction modes.
 
@@ -149,19 +150,19 @@ python scripts/02b_prepare_pdfs.py            # preview PDF title normalisation
 python scripts/02b_prepare_pdfs.py --apply    # move renamed PDFs into data/raw/pdfs
 python scripts/02c_export_literature_manifest.py  # export GitHub-safe article list
 python scripts/03_parse_documents.py
-python scripts/04_extract_with_llm.py --limit 0  # existing JSON outputs are skipped
+python scripts/04_extract_with_llm.py --limit 0  # extract all pending chunks; successful JSON is skipped
 python scripts/04b_audit_extractions.py          # deterministic admission audit
 python scripts/05_build_dataset.py
 python scripts/05b_merge_llm_into_master.py      # merges approved records only
-python scripts/06_train_models.py --run-name cpu_fast_v1
-python scripts/07_explain_models.py --run-dir outputs/experiments/cpu_fast_v1
-python scripts/08_generate_testing_matrix.py --run-dir outputs/experiments/cpu_fast_v1
+python scripts/06_train_models.py --run-name balanced_v1
+python scripts/07_explain_models.py --run-dir outputs/experiments/balanced_v1
+python scripts/08_generate_testing_matrix.py --run-dir outputs/experiments/balanced_v1
 ```
 
 Step 01 always uses the OpenAI Responses API with the `web_search` tool:
 
 ```
-python scripts/01_search_sources.py --target-count 50 --per-journal-limit 8 --min-per-journal 4 --search-rounds 3
+python scripts/01_search_sources.py --target-count 50 --per-journal-limit 8 --min-per-journal 1 --search-rounds 3
 ```
 
 The source-screening agent searches every approved journal before ranking and
@@ -171,6 +172,8 @@ automate publisher downloads, or use publisher logins, cookies, VPNs, or
 institutional access. If the API returns no valid candidates, existing Step 01
 outputs remain unchanged. A successful new search archives the previous
 canonical CSV files under `archive/source_search_runs/<utc_timestamp>/`.
+The Metals search uses the journal-specific `mdpi.com/2075-4701` path and a
+focused replenishment request if the first pass returns no valid Metals paper.
 
 Historical datasets, models, and experiment outputs can be reviewed and moved
 into the local ignored archive with:
@@ -224,15 +227,16 @@ The manifest lists article title, journal, year, DOI, source links, local
 standardised filename, verification status, and parsing readiness. It contains
 metadata only and does not include or upload the PDF files.
 
-For the current early milestone, stop after:
+For a training-only run, stop after:
 
 ```
-python scripts/06_train_models.py --run-name cpu_fast_v1
+python scripts/06_train_models.py --run-name balanced_v1
 ```
 
 Step 07 calculates holdout permutation importance, grouped error analysis,
-feature coverage, limited sensitivity scans, and a conservative relationship
-evidence table. Step 08 converts that evidence into a reduced but
+feature and combination coverage, limited sensitivity scans, SHAP explanations,
+one diagnostic B2 combination holdout per target, and a conservative
+relationship evidence table. Step 08 converts that evidence into a reduced but
 representative testing matrix. Sparse defect, surface, and heat-treatment
 regions are marked as requiring validation rather than recommended for test
 elimination.
@@ -240,12 +244,12 @@ elimination.
 The default command is equivalent to:
 
 ```text
-python scripts/06_train_models.py --run-name cpu_fast_v1 --profile fast --mode process_only --cv-folds 3
+python scripts/06_train_models.py --run-name balanced_v1 --profile balanced --mode process_only --cv-folds 5
 ```
 
-The fast profile uses 120 Random Forest trees, 200 XGBoost estimators, and one
-CatBoost model with depth 6, at most 300 iterations, and 30-round early
-stopping. The Basquin residual branch reuses this lightweight CatBoost.
+The balanced profile uses 160 Random Forest trees, 240 XGBoost estimators, one
+lightweight CatBoost, and an MLP with hidden layers 128, 64, and 32. The MLP is
+an additional comparison model and is not forced to become the selected model.
 
 Run the auxiliary reduced-testing mode separately when needed:
 
@@ -259,10 +263,14 @@ Run the original full comparison explicitly:
 python scripts/06_train_models.py --run-name full_v1 --profile standard --mode all
 ```
 
-Step 06 uses a DOI-first, dataset-ID fallback group split. It reserves a 20%
-final holdout and selects ordinary models using grouped-CV mean MAE: three
-folds for `fast` and five folds for `standard`. The final holdout is evaluated
-once. Each run is isolated under:
+Step 06 uses a DOI-first, dataset-ID and source-ID fallback group split. It
+reserves a 15% final holdout and uses five-fold GroupKFold on the remaining 85%
+for the default balanced profile. Ordinary models are selected primarily by
+grouped-CV out-of-fold R-squared, with RMSE and MAE as tie-breakers. The final
+holdout is evaluated once. Candidate features must have at least 20 non-missing
+rows and 1% coverage
+in the task frame, preventing extremely sparse fields from destabilising fold
+preprocessing. Each run is isolated under:
 
 ```text
 outputs/experiments/<run_name>/
@@ -272,10 +280,16 @@ The run contains configuration, fold and summary metrics, Basquin parameters,
 physical monotonicity checks, model artifacts, and a model registry. Existing
 legacy metrics and models are not overwritten.
 
+Step 04 normally extracts parsed text chunks. When a PDF has no usable text
+layer, it sends the original PDF as a Responses API `input_file`, allowing a
+vision-capable model to inspect page images. Existing successful text
+extractions remain incremental; prior empty text-only results for scanned PDFs
+are eligible for one PDF-vision retry.
+
 After training, batch-predict proposed experiment scenarios with:
 
 ```text
-python scripts/06b_predict_scenarios.py --run-dir outputs/experiments/cpu_fast_v1 --input examples/prediction_scenarios_template.csv --output outputs/experiments/cpu_fast_v1/scenario_predictions.csv --mode all
+python scripts/06b_predict_scenarios.py --run-dir outputs/experiments/balanced_v1 --input examples/prediction_scenarios_template.csv --output outputs/experiments/balanced_v1/scenario_predictions.csv --mode all
 ```
 
 The output reports 90% out-of-fold conformal intervals for ordinary and
@@ -306,6 +320,11 @@ not replacement evidence values.
 The project skills under `skills/` are dual-use task specifications. Codex uses
 their YAML metadata for discovery, while OpenAI API callers inject only the
 skill body into the system prompt.
+
+Step 04 is incremental by default: existing successful JSON outputs are
+skipped, while chunks without output and prior API-error outputs are selected
+for extraction. `--limit` applies to that pending set, and `--overwrite` is
+required to deliberately rerun successful extractions.
 
 ## Important Notes
 

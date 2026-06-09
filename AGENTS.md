@@ -54,7 +54,9 @@ Skills describe rules and outputs; scripts provide reproducible execution. Keep 
   `build`, `ci`, and `chore`.
 - The description must be non-empty. Prefer a concise English imperative
   phrase that starts with a lowercase letter and has no trailing period.
-- Enable the repository hook with `git config core.hooksPath .githooks`.
+- Install the local repository hook with
+  `python scripts/install_commit_hook.py`. The `.githooks/` directory is local
+  and ignored; the tracked validator is `scripts/validate_commit_message.py`.
 - On Windows, run Git commands through Git for Windows. The hook uses the
   bundled POSIX shell and must retain its `#!/bin/sh` line and LF-compatible
   script syntax.

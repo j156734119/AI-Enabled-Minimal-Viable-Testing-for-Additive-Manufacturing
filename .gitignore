@@ -78,3 +78,6 @@ outputs/experiments/*
 
 # Local archives of historical data, models, and results
 archive/
+
+# Local Git hooks are installed per clone.
+.githooks/

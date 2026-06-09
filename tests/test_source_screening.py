@@ -9,6 +9,7 @@ import pytest
 from am_mvt.ingestion import llm_source_screening
 from am_mvt.ingestion.llm_source_screening import (
     MEETING_ONE_JOURNAL_SCOPE,
+    build_search_prompt,
     normalise_score,
     select_balanced_candidates,
 )
@@ -69,7 +70,7 @@ def test_step01_defaults_to_openai_agent_search(monkeypatch):
         lambda: argparse.Namespace(
             target_count=50,
             per_journal_limit=8,
-            min_per_journal=4,
+            min_per_journal=1,
             search_rounds=3,
             year_from=2015,
             year_to=2026,
@@ -86,6 +87,29 @@ def test_step01_defaults_to_openai_agent_search(monkeypatch):
 
     assert len(calls) == 1
     assert calls[0]["model"] == "test-model"
+    assert calls[0]["min_per_journal"] == 1
+
+
+def test_step01_cli_defaults_to_one_candidate_per_journal(monkeypatch):
+    module = load_step01_module()
+    monkeypatch.setattr(sys, "argv", ["01_search_sources.py"])
+    assert module.parse_args().min_per_journal == 1
+
+
+def test_metals_prompt_uses_journal_specific_mdpi_path():
+    metals = next(
+        scope for scope in MEETING_ONE_JOURNAL_SCOPE
+        if scope.journal == "Metals"
+    )
+    prompt = build_search_prompt(
+        metals,
+        per_journal_limit=4,
+        year_from=2015,
+        year_to=2026,
+        focus_area="tensile",
+    )
+    assert "site:mdpi.com/2075-4701" in prompt
+    assert "other MDPI journals" in prompt
 
 
 def test_step01_rejects_removed_legacy_switches():

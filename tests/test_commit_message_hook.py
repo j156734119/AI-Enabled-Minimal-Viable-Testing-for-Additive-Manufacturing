@@ -1,33 +1,8 @@
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-
 import pytest
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def run_commit_message_hook(tmp_path: Path, message: str) -> subprocess.CompletedProcess:
-    message_path = tmp_path / "COMMIT_EDITMSG"
-    message_path.write_text(message, encoding="utf-8")
-    return subprocess.run(
-        [
-            "git",
-            "-c",
-            "core.hooksPath=.githooks",
-            "hook",
-            "run",
-            "commit-msg",
-            "--",
-            str(message_path),
-        ],
-        cwd=PROJECT_ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+from scripts.validate_commit_message import is_valid_commit_message
 
 
 @pytest.mark.parametrize(
@@ -48,10 +23,8 @@ def run_commit_message_hook(tmp_path: Path, message: str) -> subprocess.Complete
         "test(api_v2): cover empty results\n\nAdditional context.",
     ],
 )
-def test_commit_message_hook_accepts_valid_messages(tmp_path, message):
-    result = run_commit_message_hook(tmp_path, message)
-
-    assert result.returncode == 0, result.stderr
+def test_commit_message_hook_accepts_valid_messages(message):
+    assert is_valid_commit_message(message)
 
 
 @pytest.mark.parametrize(
@@ -68,9 +41,5 @@ def test_commit_message_hook_accepts_valid_messages(tmp_path, message):
         "plain commit message",
     ],
 )
-def test_commit_message_hook_rejects_invalid_messages(tmp_path, message):
-    result = run_commit_message_hook(tmp_path, message)
-
-    assert result.returncode != 0
-    assert "invalid commit message" in result.stderr
-    assert "feat(extraction): retain page-level evidence metadata" in result.stderr
+def test_commit_message_hook_rejects_invalid_messages(message):
+    assert not is_valid_commit_message(message)

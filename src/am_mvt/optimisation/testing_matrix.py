@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from am_mvt.config import get_path
@@ -22,6 +23,13 @@ MATRIX_COLUMNS = [
     "model_evidence",
     "coverage_risk",
     "confidence_level",
+    "recommendation_action",
+    "n_rows",
+    "source_count",
+    "group_count",
+    "test_r2",
+    "prediction_interval_width",
+    "shap_support",
     "needs_validation",
 ]
 
@@ -53,6 +61,8 @@ def evidence_text(relationships: pd.DataFrame, relationship_id: str) -> str:
 def build_reduced_testing_matrix(
     summary: pd.DataFrame,
     relationships: pd.DataFrame,
+    combination_coverage: pd.DataFrame | None = None,
+    importance_comparison: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     fatigue = selected_metric(summary, "log10_fatigue_life_cycles")
     uts = selected_metric(summary, "uts_MPa")
@@ -226,7 +236,165 @@ def build_reduced_testing_matrix(
             "needs_validation": True,
         },
     ]
-    return pd.DataFrame(rows, columns=MATRIX_COLUMNS)
+    principle_actions = {
+        1: "retain_core",
+        2: "retain_core",
+        3: "retain_validation",
+        4: "collect_more_data",
+        5: "retain_core",
+        6: "retain_validation",
+        7: "retain_validation",
+    }
+    for row in rows:
+        row.update(
+            {
+                "recommendation_action": principle_actions[row["priority"]],
+                "n_rows": np.nan,
+                "source_count": np.nan,
+                "group_count": np.nan,
+                "test_r2": np.nan,
+                "prediction_interval_width": np.nan,
+                "shap_support": "principle_level",
+            }
+        )
+
+    condition_rows: list[dict[str, object]] = []
+    if combination_coverage is not None and not combination_coverage.empty:
+        comparison = (
+            importance_comparison
+            if importance_comparison is not None
+            else pd.DataFrame()
+        )
+        target_labels = {
+            "uts_MPa": ("tensile", "UTS"),
+            "yield_strength_MPa": ("tensile", "yield strength"),
+            "elongation_percent": ("tensile", "elongation"),
+            "youngs_modulus_GPa": ("elastic modulus", "Young's modulus"),
+            "log10_fatigue_life_cycles": ("S-N fatigue", "fatigue life"),
+        }
+        for target, target_group in combination_coverage.groupby("target"):
+            metric = selected_metric(summary, str(target))
+            if metric.empty:
+                continue
+            test_r2 = float(metric.get("test_r2", np.nan))
+            radius = float(metric.get("conformal_q90", np.nan))
+            interval_width = 2 * radius if np.isfinite(radius) else np.nan
+            if {
+                "target",
+                "feature",
+                "evidence_stability",
+            } <= set(comparison.columns):
+                supported = comparison.loc[
+                    comparison["target"].eq(target)
+                    & comparison["evidence_stability"].eq(
+                        "supported_by_both"
+                    ),
+                    "feature",
+                ].dropna().astype(str).tolist()
+            else:
+                supported = []
+            supported_text = ";".join(supported[:8]) or "no_dual_support"
+            test_type, property_label = target_labels.get(
+                str(target),
+                ("mechanical test", str(target)),
+            )
+            for coverage_row in target_group.nlargest(20, "rows").itertuples(
+                index=False
+            ):
+                n_rows = int(coverage_row.rows)
+                source_count = int(coverage_row.source_count)
+                group_count = int(coverage_row.group_count)
+                coverage_level = str(coverage_row.coverage_level)
+                dual_support = bool(supported)
+                combination_known = all(
+                    str(
+                        getattr(coverage_row, column, "missing")
+                    ).strip().lower()
+                    not in {"", "missing", "nan", "<na>"}
+                    for column in [
+                        "alloy_family",
+                        "am_process",
+                        "build_orientation",
+                        "surface_condition",
+                    ]
+                )
+                reducible = (
+                    coverage_level == "adequate"
+                    and source_count >= 3
+                    and group_count >= 3
+                    and np.isfinite(test_r2)
+                    and test_r2 >= 0.5
+                    and np.isfinite(interval_width)
+                    and dual_support
+                    and combination_known
+                )
+                if reducible:
+                    action = "candidate_for_reduction"
+                    confidence = "moderate_model_supported"
+                    risk = "low_to_medium"
+                elif coverage_level == "sparse":
+                    action = "collect_more_data"
+                    confidence = "insufficient"
+                    risk = "high"
+                else:
+                    action = "retain_validation"
+                    confidence = "limited"
+                    risk = "medium_to_high"
+                condition_rows.append(
+                    {
+                        "priority": len(condition_rows) + 10,
+                        "alloy_family": getattr(
+                            coverage_row,
+                            "alloy_family",
+                            "missing",
+                        ),
+                        "am_process": getattr(
+                            coverage_row,
+                            "am_process",
+                            "missing",
+                        ),
+                        "build_orientation": getattr(
+                            coverage_row,
+                            "build_orientation",
+                            "missing",
+                        ),
+                        "surface_condition": getattr(
+                            coverage_row,
+                            "surface_condition",
+                            "missing",
+                        ),
+                        "test_type": test_type,
+                        "target_property": property_label,
+                        "recommended_test_condition": (
+                            "Use this represented combination as a candidate "
+                            "condition for a reduced matrix."
+                            if reducible
+                            else "Retain validation or collect additional data "
+                            "before reducing this condition."
+                        ),
+                        "reason": (
+                            f"Combination coverage={coverage_level}; "
+                            f"holdout R2={test_r2:.3f}."
+                        ),
+                        "supporting_features": supported_text,
+                        "model_evidence": (
+                            f"{metric.get('candidate')} holdout R2={test_r2:.3f}; "
+                            f"90% interval width={interval_width:.3g}."
+                        ),
+                        "coverage_risk": risk,
+                        "confidence_level": confidence,
+                        "recommendation_action": action,
+                        "n_rows": n_rows,
+                        "source_count": source_count,
+                        "group_count": group_count,
+                        "test_r2": test_r2,
+                        "prediction_interval_width": interval_width,
+                        "shap_support": supported_text,
+                        "needs_validation": not reducible,
+                    }
+                )
+
+    return pd.DataFrame(rows + condition_rows, columns=MATRIX_COLUMNS)
 
 
 def generate_testing_matrix(
@@ -246,7 +414,26 @@ def generate_testing_matrix(
         )
 
     relationships = pd.read_csv(relationship_path)
-    matrix = build_reduced_testing_matrix(summary, relationships)
+    combination_path = run_dir / "tables" / "combination_coverage.csv"
+    comparison_path = (
+        run_dir / "tables" / "feature_importance_comparison.csv"
+    )
+    combination_coverage = (
+        pd.read_csv(combination_path)
+        if combination_path.exists()
+        else pd.DataFrame()
+    )
+    importance_comparison = (
+        pd.read_csv(comparison_path)
+        if comparison_path.exists()
+        else pd.DataFrame()
+    )
+    matrix = build_reduced_testing_matrix(
+        summary,
+        relationships,
+        combination_coverage=combination_coverage,
+        importance_comparison=importance_comparison,
+    )
     output_path = (
         Path(output_path)
         if output_path is not None

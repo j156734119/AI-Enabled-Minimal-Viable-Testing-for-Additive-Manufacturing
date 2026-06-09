@@ -30,7 +30,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--min-per-journal",
         type=int,
-        default=4,
+        default=1,
         help="Minimum candidates reserved for each approved journal when available.",
     )
     parser.add_argument(

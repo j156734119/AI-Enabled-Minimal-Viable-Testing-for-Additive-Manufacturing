@@ -44,7 +44,8 @@ def create_empty_llm_output() -> Path:
     output_path = get_path("data", "interim", "llm_extracted_records.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    save_llm_extracted_records(output_path=output_path)
+    if not output_path.exists():
+        save_llm_extracted_records(output_path=output_path)
 
     return output_path
 
@@ -58,7 +59,10 @@ def parse_args() -> argparse.Namespace:
         "--limit",
         type=int,
         default=20,
-        help="Maximum number of text chunks to process. Use 0 to process all chunks.",
+        help=(
+            "Maximum pending chunks to extract after existing successful JSON "
+            "outputs are skipped. Use 0 for all pending chunks."
+        ),
     )
 
     parser.add_argument(
@@ -91,7 +95,7 @@ def main() -> None:
 
         print("No text chunks found. Step 04 LLM extraction skipped safely.")
         print("Run python scripts/03_parse_documents.py first.")
-        print(f"Empty LLM extracted CSV created: {output_csv}")
+        print(f"Existing LLM extracted CSV retained or empty file created: {output_csv}")
         print("Step 04 complete.")
         return
 
@@ -102,7 +106,7 @@ def main() -> None:
         print("Please add it to the project root .env file:")
         print("OPENAI_API_KEY=your_api_key")
         print("OPENAI_MODEL=gpt-4o-mini")
-        print(f"Empty LLM extracted CSV created: {output_csv}")
+        print(f"Existing LLM extracted CSV retained or empty file created: {output_csv}")
         print("Step 04 complete.")
         return
 
@@ -117,7 +121,7 @@ def main() -> None:
     output_csv = save_llm_extracted_records()
 
     print("Step 04 complete: LLM extraction finished.")
-    print(f"JSON files available: {len(extracted_files)}")
+    print(f"New or retried JSON files written: {len(extracted_files)}")
     print(f"Combined LLM extracted CSV: {output_csv}")
     print("Audit file: data/interim/llm_extraction_audit.csv")
 

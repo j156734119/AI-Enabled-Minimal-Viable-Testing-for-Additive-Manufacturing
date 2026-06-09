@@ -15,14 +15,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--run-name",
-        default=f"fast_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        default=f"balanced_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         help="New directory name under outputs/experiments/.",
     )
     parser.add_argument(
         "--profile",
-        default="fast",
-        choices=["fast", "standard"],
-        help="CPU-fast or full comparison profile.",
+        default="balanced",
+        choices=["fast", "balanced", "standard"],
+        help="CPU-fast, five-fold balanced, or full comparison profile.",
     )
     parser.add_argument(
         "--mode",

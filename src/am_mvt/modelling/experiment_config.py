@@ -26,7 +26,6 @@ PROCESS_CATEGORICAL_FEATURES = [
     "heat_treatment",
     "surface_condition",
     "post_processing",
-    "density_measurement_method",
     "defect_type",
 ]
 
@@ -43,7 +42,6 @@ MEASURED_PROPERTY_FEATURES = [
     "uts_MPa",
     "elongation_percent",
     "youngs_modulus_GPa",
-    "hardness_HV",
 ]
 
 
@@ -155,6 +153,17 @@ TRAINING_PROFILES = {
         "basquin_residual_catboost": "catboost_d6",
         "aft_boost_rounds": 1200,
         "aft_early_stopping_rounds": 50,
+    },
+    "balanced": {
+        "default_cv_folds": 5,
+        "random_forest_estimators": 160,
+        "xgboost_estimators": 240,
+        "catboost_candidates": FAST_CATBOOST_CANDIDATES,
+        "catboost_early_stopping_rounds": 40,
+        "basquin_residual_catboost": "catboost_light",
+        "aft_boost_rounds": 600,
+        "aft_early_stopping_rounds": 40,
+        "include_mlp": True,
     },
 }
 

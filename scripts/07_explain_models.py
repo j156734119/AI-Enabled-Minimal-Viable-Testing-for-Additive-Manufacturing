@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--run-dir",
-        default="outputs/experiments/cpu_fast_v1",
+        default="outputs/experiments/balanced_v1",
     )
     parser.add_argument(
         "--mode",

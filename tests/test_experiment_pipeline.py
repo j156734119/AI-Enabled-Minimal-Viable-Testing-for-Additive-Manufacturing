@@ -21,6 +21,7 @@ from am_mvt.modelling.experiment_data import (
     assert_disjoint_groups,
     build_evaluation_groups,
     make_group_folds,
+    select_usable_features,
     select_final_holdout_groups,
     split_development_and_test,
 )
@@ -33,6 +34,7 @@ from am_mvt.modelling.experiment_training import (
     get_model_candidates,
     make_aft_bounds,
     run_experiment_suite,
+    select_candidate_by_oof,
     write_run_configuration,
 )
 
@@ -106,7 +108,7 @@ def test_fast_profile_uses_one_light_catboost_candidate():
         "dummy_mean",
         "dummy_median",
         "alloy_family_median",
-        "ridge",
+        "linear_l2_sgd",
         "random_forest",
         "xgboost",
         "catboost_light",
@@ -114,6 +116,7 @@ def test_fast_profile_uses_one_light_catboost_candidate():
     assert catboost_names == ["catboost_light"]
     assert candidates["random_forest"]["model"].n_estimators == 120
     assert candidates["xgboost"]["model"].n_estimators == 200
+    assert candidates["linear_l2_sgd"]["model"].penalty == "l2"
     assert candidates["catboost_light"]["params"]["iterations"] == 300
     assert candidates["catboost_light"]["early_stopping_rounds"] == 30
 
@@ -133,12 +136,21 @@ def test_standard_profile_retains_all_catboost_candidates():
     }
 
 
-def test_fast_defaults_to_process_only_and_three_folds():
+def test_balanced_profile_adds_three_layer_mlp():
+    candidates = get_model_candidates("balanced")
+    model = candidates["mlp_128_64_32"]["model"]
+    assert model.hidden_layer_sizes == (128, 64, 32)
+    assert model.early_stopping is True
+    assert candidates["mlp_128_64_32"]["dense"] is True
+
+
+def test_balanced_defaults_to_process_only_and_five_folds():
     signature = inspect.signature(run_experiment_suite)
-    assert signature.parameters["profile"].default == "fast"
+    assert signature.parameters["profile"].default == "balanced"
     assert signature.parameters["mode"].default == "process_only"
     assert signature.parameters["n_splits"].default is None
     assert get_training_profile("fast")["default_cv_folds"] == 3
+    assert get_training_profile("balanced")["default_cv_folds"] == 5
     assert get_training_profile("standard")["default_cv_folds"] == 5
     assert len(list(iter_task_mode_targets("process_only"))) == 5
     assert len(list(iter_task_mode_targets("all"))) == 10
@@ -162,6 +174,39 @@ def test_run_configuration_records_fast_profile_and_mode(tmp_path):
     )
     assert payload["profile_parameters"]["aft_boost_rounds"] == 400
     assert len(payload["task_configs"]) == 5
+
+
+def test_run_configuration_records_fifteen_percent_holdout(tmp_path):
+    write_run_configuration(
+        tmp_path,
+        run_name="balanced_test",
+        profile="balanced",
+        n_splits=5,
+        mode="process_only",
+    )
+    payload = json.loads((tmp_path / "run_config.json").read_text())
+    assert payload["test_fraction"] == 0.15
+    assert payload["selection_metric"].startswith("grouped-CV OOF R2")
+
+
+def test_candidate_selection_prioritises_oof_r2():
+    summary = pd.DataFrame(
+        [
+            {
+                "candidate": "lower_error",
+                "oof_r2": 0.40,
+                "oof_rmse": 1.0,
+                "oof_mae": 0.5,
+            },
+            {
+                "candidate": "higher_r2",
+                "oof_r2": 0.55,
+                "oof_rmse": 1.2,
+                "oof_mae": 0.6,
+            },
+        ]
+    )
+    assert select_candidate_by_oof(summary) == "higher_r2"
 
 
 def test_doi_has_priority_for_evaluation_groups():
@@ -203,6 +248,7 @@ def test_holdout_groups_are_disjoint():
     )
     development, test = split_development_and_test(frame)
     assert_disjoint_groups(development, test)
+    assert len(test) / len(frame) == pytest.approx(0.15, abs=0.05)
 
 
 def test_group_kfold_never_splits_an_evaluation_group():
@@ -262,6 +308,24 @@ def test_invalid_or_unit_contaminated_stress_is_excluded():
     )
     filtered = filter_valid_fatigue_loading(frame)
     assert filtered["stress_amplitude_MPa"].tolist() == [100.0]
+
+
+def test_sparse_features_are_excluded_from_training():
+    frame = pd.DataFrame(
+        {
+            "well_covered": np.arange(200, dtype=float),
+            "too_sparse": [1.0] * 10 + [np.nan] * 190,
+            "category_ok": ["a"] * 100 + ["b"] * 100,
+            "category_sparse": ["a"] * 10 + [pd.NA] * 190,
+        }
+    )
+    numeric, categorical = select_usable_features(
+        frame,
+        ["well_covered", "too_sparse"],
+        ["category_ok", "category_sparse"],
+    )
+    assert numeric == ["well_covered"]
+    assert categorical == ["category_ok"]
 
 
 def test_basquin_slope_is_negative_and_prediction_is_monotonic():

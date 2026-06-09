@@ -68,7 +68,7 @@ JOURNAL_ALIASES: dict[str, str] = {
 SEARCH_FOCUS_AREAS: list[str] = [
     (
         "static tensile data: yield strength, ultimate tensile strength, "
-        "elongation to failure, elastic modulus, hardness, and processing "
+        "elongation to failure, elastic modulus, and processing "
         "parameters for metal AM"
     ),
     (
@@ -77,10 +77,19 @@ SEARCH_FOCUS_AREAS: list[str] = [
     ),
     (
         "process-structure-property data: LPBF, DED, WAAM, binder jetting, "
-        "heat treatment, post-processing, porosity, residual stress, and "
+        "heat treatment, post-processing, porosity, and "
         "mechanical property tables"
     ),
 ]
+
+
+JOURNAL_SEARCH_HINTS = {
+    "Metals": (
+        "Use the Metals journal article path site:mdpi.com/2075-4701 and the "
+        "Metals Additive Manufacturing section. Do not return papers from "
+        "other MDPI journals such as Materials, Polymers, or Applied Sciences."
+    ),
+}
 
 
 AccessType = Literal[
@@ -133,8 +142,8 @@ VPN sessions, passwords, or institutional access tokens.
 
 Prefer papers likely to contain extractable original mechanical testing data:
 process parameters, material/alloy, build orientation, surface condition,
-heat treatment, porosity/defect metrics, tensile properties, hardness,
-elastic modulus, fatigue stress-life data, or S-N fatigue life.
+heat treatment, porosity/defect metrics, tensile properties, elastic modulus,
+fatigue stress-life data, or S-N fatigue life.
 
 Exclude generic mechanical-property prediction competitions and keep the focus
 on agent-assisted, evidence-grounded reduced but representative mechanical
@@ -181,6 +190,10 @@ def build_search_prompt(
     year_to: int,
     focus_area: str,
 ) -> str:
+    search_hint = JOURNAL_SEARCH_HINTS.get(
+        journal_scope.journal,
+        f"Prefer results from site:{journal_scope.publisher_domain}.",
+    )
     return f"""
 Search the web for candidate original research papers from this journal only:
 
@@ -189,10 +202,11 @@ Priority tier: {journal_scope.priority_tier}
 Preferred publisher domain: {journal_scope.publisher_domain}
 Year range: {year_from}-{year_to}
 Search focus: {focus_area}
+Journal-specific search instruction: {search_hint}
 
 Return up to {per_journal_limit} candidate papers that are highly relevant to:
 - metal additive manufacturing
-- tensile properties, fatigue life, S-N fatigue data, hardness, elastic modulus,
+- tensile properties, fatigue life, S-N fatigue data, elastic modulus,
   elongation to failure, yield strength, or UTS
 - process parameters, porosity, defects, surface condition, heat treatment,
   post-processing, build orientation, or fatigue loading conditions
@@ -201,7 +215,9 @@ Rank papers higher when they are likely to contain extractable numerical data,
 tables, supplementary datasets, or clear experimental condition-property pairs.
 Prioritise papers that can support at least one of these current modelling
 targets: UTS, S-N fatigue life, elongation/yield response, or elastic/Young's
-modulus. Hardness and failure-mode labels are useful secondary fields.
+modulus. Do not prioritise hardness, residual stress, or failure-mode-only
+papers because those variables are future extensions rather than current
+modelling targets.
 
 Only include papers from the specified journal. Do not include review-only
 papers unless they provide reusable public datasets. Do not include sources
@@ -498,7 +514,7 @@ def write_source_screening_outputs(
 def run_openai_agent_source_screening(
     target_count: int = 50,
     per_journal_limit: int = 8,
-    min_per_journal: int = 4,
+    min_per_journal: int = 1,
     year_from: int = 2015,
     year_to: int = 2026,
     model: str = DEFAULT_SCREENING_MODEL,
@@ -571,6 +587,18 @@ def run_openai_agent_source_screening(
         raise RuntimeError(
             "OpenAI agent source screening returned no valid candidates. "
             "Existing Step 01 outputs were left unchanged."
+        )
+
+    covered_journals = set(df["journal"].astype(str))
+    missing_journals = [
+        scope.journal
+        for scope in MEETING_ONE_JOURNAL_SCOPE
+        if scope.journal not in covered_journals
+    ]
+    if missing_journals:
+        print(
+            "Warning: no valid candidate was returned for: "
+            + ", ".join(missing_journals)
         )
 
     output_paths = write_source_screening_outputs(df)
