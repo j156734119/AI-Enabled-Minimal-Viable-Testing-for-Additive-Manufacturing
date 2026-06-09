@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from am_mvt.ingestion.pdf_title_normaliser import (
     normalise_year,
     read_candidate_sources,
 )
+from am_mvt.utils.artifacts import sha256_file
 
 
 MANIFEST_COLUMNS = [
@@ -31,6 +33,10 @@ MANIFEST_COLUMNS = [
     "priority_tier",
     "local_pdf_filename",
     "file_size_bytes",
+    "content_sha256",
+    "canonical_source_id",
+    "duplicate_of",
+    "processing_status",
     "title_identification_method",
     "candidate_match_score",
     "title_verified",
@@ -44,6 +50,13 @@ MANIFEST_COLUMNS = [
 def article_number_from_filename(filename: str) -> str:
     match = re.match(r"^(\d{1,4})(?:__|_)", filename)
     return match.group(1).zfill(3) if match else ""
+
+
+def source_id_from_filename(filename: str) -> str:
+    stem = Path(filename).name
+    while stem.lower().endswith(".pdf"):
+        stem = stem[:-4]
+    return re.sub(r"[^a-zA-Z0-9]+", "_", stem).strip("_").lower()
 
 
 def candidate_row_for_match(
@@ -167,13 +180,15 @@ def build_manifest_row(
             or float(match.get("match_score", 0.0) or 0.0) >= 0.86
         )
         parsed_text_path = parsed_text_dir / f"{pdf_path.stem}.txt"
+        source_id = first_non_empty(
+            candidate.get("source_id"),
+            match.get("matched_source_id"),
+            source_id_from_filename(pdf_path.name),
+        )
 
         return {
             "article_number": article_number_from_filename(pdf_path.name),
-            "source_id": first_non_empty(
-                candidate.get("source_id"),
-                match.get("matched_source_id"),
-            ),
+            "source_id": source_id,
             "title": title,
             "journal": journal,
             "year": year,
@@ -184,6 +199,10 @@ def build_manifest_row(
             "priority_tier": first_non_empty(candidate.get("priority_tier")),
             "local_pdf_filename": pdf_path.name,
             "file_size_bytes": pdf_path.stat().st_size,
+            "content_sha256": sha256_file(pdf_path),
+            "canonical_source_id": source_id,
+            "duplicate_of": "",
+            "processing_status": "canonical",
             "title_identification_method": match.get("match_method", ""),
             "candidate_match_score": match.get("match_score", 0.0),
             "title_verified": title_verified,
@@ -209,6 +228,10 @@ def build_manifest_row(
             "priority_tier": "",
             "local_pdf_filename": pdf_path.name,
             "file_size_bytes": pdf_path.stat().st_size,
+            "content_sha256": sha256_file(pdf_path),
+            "canonical_source_id": source_id_from_filename(pdf_path.name),
+            "duplicate_of": "",
+            "processing_status": "error",
             "title_identification_method": "error",
             "candidate_match_score": 0.0,
             "title_verified": False,
@@ -217,6 +240,79 @@ def build_manifest_row(
             "parsed_text_present": False,
             "notes": f"Metadata extraction failed: {exc}",
         }
+
+
+def mark_duplicate_sources(manifest: pd.DataFrame) -> pd.DataFrame:
+    if manifest.empty:
+        return manifest
+
+    result = manifest.copy()
+    result["_normalised_doi"] = result["doi"].map(normalise_doi)
+    result["_duplicate_key"] = result.apply(
+        lambda row: (
+            f"doi:{row['_normalised_doi']}"
+            if row["_normalised_doi"]
+            else f"sha256:{row['content_sha256']}"
+        ),
+        axis=1,
+    )
+
+    for _, group in result.groupby("_duplicate_key", sort=False):
+        if len(group) < 2:
+            continue
+        ordered = group.sort_values(
+            by=["article_number", "local_pdf_filename"],
+            na_position="last",
+        )
+        canonical_index = ordered.index[0]
+        canonical = result.loc[canonical_index]
+        canonical_id = str(canonical["source_id"])
+        metadata_columns = ["title", "journal", "year", "doi"]
+
+        for duplicate_index in ordered.index[1:]:
+            duplicate = result.loc[duplicate_index]
+            same_content = (
+                str(duplicate["content_sha256"])
+                == str(canonical["content_sha256"])
+            )
+            title_similarity = SequenceMatcher(
+                None,
+                re.sub(r"\W+", " ", str(canonical["title"]).casefold()).strip(),
+                re.sub(r"\W+", " ", str(duplicate["title"]).casefold()).strip(),
+            ).ratio()
+            conflicts = [
+                column
+                for column in metadata_columns
+                if str(result.at[duplicate_index, column]).strip()
+                and str(canonical[column]).strip()
+                and str(result.at[duplicate_index, column]).strip().casefold()
+                != str(canonical[column]).strip().casefold()
+            ]
+            if not same_content and title_similarity < 0.80:
+                result.at[duplicate_index, "processing_status"] = (
+                    "metadata_conflict"
+                )
+                result.at[duplicate_index, "ready_for_parsing"] = False
+                existing = str(result.at[duplicate_index, "notes"]).strip()
+                result.at[duplicate_index, "notes"] = (
+                    f"{existing} DOI matched another record but title/content "
+                    "did not; excluded pending human review."
+                ).strip()
+                continue
+            result.at[duplicate_index, "canonical_source_id"] = canonical_id
+            result.at[duplicate_index, "duplicate_of"] = canonical_id
+            result.at[duplicate_index, "processing_status"] = "duplicate"
+            result.at[duplicate_index, "ready_for_parsing"] = False
+            if conflicts:
+                existing = str(result.at[duplicate_index, "notes"]).strip()
+                result.at[duplicate_index, "notes"] = (
+                    f"{existing} Metadata conflict with canonical source: "
+                    + ", ".join(conflicts)
+                ).strip()
+
+        result.at[canonical_index, "canonical_source_id"] = canonical_id
+
+    return result.drop(columns=["_normalised_doi", "_duplicate_key"])
 
 
 def build_literature_manifest(
@@ -245,7 +341,9 @@ def build_literature_manifest(
         for pdf_path in sorted(pdf_dir.glob("*.pdf"))
     ]
 
-    manifest = pd.DataFrame(rows, columns=MANIFEST_COLUMNS)
+    manifest = mark_duplicate_sources(
+        pd.DataFrame(rows, columns=MANIFEST_COLUMNS)
+    )
 
     if not manifest.empty:
         manifest = manifest.sort_values(

@@ -10,6 +10,7 @@ from am_mvt.config import get_path
 from am_mvt.extraction.batch_extract import run_batch_extraction
 from am_mvt.extraction.openai_extractor import DEFAULT_MODEL
 from am_mvt.extraction.postprocess import save_llm_extracted_records
+from am_mvt.parsing.document_pipeline import active_chunk_paths
 
 
 def load_project_env() -> None:
@@ -33,7 +34,7 @@ def load_project_env() -> None:
 
 
 def has_text_chunks(chunk_dir: Path) -> bool:
-    return chunk_dir.exists() and any(chunk_dir.glob("*.txt"))
+    return chunk_dir.exists() and bool(active_chunk_paths())
 
 
 def has_openai_api_key() -> bool:
@@ -77,6 +78,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MODEL,
         help="OpenAI model name.",
     )
+    parser.add_argument(
+        "--combine-only",
+        action="store_true",
+        help="Rebuild the combined CSV from active existing JSON without API calls.",
+    )
 
     return parser.parse_args()
 
@@ -89,6 +95,12 @@ def main() -> None:
     chunk_dir = get_path("data", "interim", "text_chunks")
     llm_output_dir = get_path("data", "interim", "llm_outputs")
     llm_output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.combine_only:
+        output_csv = save_llm_extracted_records()
+        print("Step 04 combine-only complete; no API calls were made.")
+        print(f"Combined LLM extracted CSV: {output_csv}")
+        return
 
     if not has_text_chunks(chunk_dir):
         output_csv = create_empty_llm_output()

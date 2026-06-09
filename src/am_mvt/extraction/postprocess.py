@@ -9,6 +9,7 @@ import pandas as pd
 
 from am_mvt.cleaning.project_schema import MASTER_COLUMNS, standardise_table_to_project_schema
 from am_mvt.config import get_path
+from am_mvt.parsing.document_pipeline import load_active_chunk_manifest
 from am_mvt.utils.values import is_missing, parse_boolean
 
 
@@ -181,7 +182,16 @@ def load_llm_json_outputs(
 
     llm_output_dir.mkdir(parents=True, exist_ok=True)
 
-    json_files = sorted(llm_output_dir.glob("*.json"))
+    active_manifest = load_active_chunk_manifest()
+    if active_manifest.empty:
+        json_files = sorted(llm_output_dir.glob("*.json"))
+    else:
+        active_ids = set(active_manifest["chunk_id"].dropna().astype(str))
+        json_files = sorted(
+            path
+            for path in llm_output_dir.glob("*.json")
+            if path.stem in active_ids
+        )
 
     if not json_files:
         empty_columns = list(MASTER_COLUMNS)

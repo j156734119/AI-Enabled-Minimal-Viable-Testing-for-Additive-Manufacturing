@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +49,7 @@ from am_mvt.modelling.experiment_metrics import (
     harrell_c_index,
     regression_metrics,
 )
+from am_mvt.utils.artifacts import sha256_file
 
 
 @dataclass
@@ -95,7 +99,27 @@ def filter_valid_fatigue_loading(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def get_model_candidates(profile: str) -> dict[str, dict[str, Any]]:
+@lru_cache(maxsize=1)
+def mlp_runtime_available() -> bool:
+    probe = (
+        "import numpy as np; "
+        "a=np.ones((2,2),dtype=float); "
+        "assert (a @ a).shape == (2,2)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def get_model_candidates(
+    profile: str,
+    *,
+    verify_mlp_runtime: bool = False,
+) -> dict[str, dict[str, Any]]:
     profile_config = get_training_profile(profile)
     candidates = {
         "dummy_mean": {"kind": "sklearn", "model": DummyRegressor(strategy="mean")},
@@ -156,7 +180,14 @@ def get_model_candidates(profile: str) -> dict[str, dict[str, Any]]:
             ).items()
         }
     )
-    if bool(profile_config.get("include_mlp", False)):
+    include_mlp = bool(profile_config.get("include_mlp", False))
+    if include_mlp and verify_mlp_runtime and not mlp_runtime_available():
+        include_mlp = False
+        print(
+            "    WARNING: MLP skipped because the NumPy/BLAS runtime failed "
+            "an isolated matrix-multiplication probe."
+        )
+    if include_mlp:
         candidates["mlp_128_64_32"] = {
             "kind": "sklearn",
             "dense": True,
@@ -484,6 +515,24 @@ def split_audit_fields(
     }
 
 
+def dataset_provenance(
+    dataset_path: Path,
+    frame: pd.DataFrame,
+    test_df: pd.DataFrame,
+) -> dict[str, Any]:
+    project_root = get_path().resolve()
+    resolved = dataset_path.resolve()
+    return {
+        "dataset_path": resolved.relative_to(project_root).as_posix(),
+        "dataset_sha256": sha256_file(resolved),
+        "eligible_rows": len(frame),
+        "eligible_groups": int(frame["evaluation_group_id"].nunique()),
+        "final_test_groups": sorted(
+            test_df["evaluation_group_id"].dropna().astype(str).unique().tolist()
+        ),
+    }
+
+
 def select_candidate_by_oof(candidate_summary: pd.DataFrame) -> str:
     return str(
         candidate_summary.sort_values(
@@ -537,7 +586,7 @@ def train_conventional_experiment(
         f"categorical={len(categorical_features)}"
     )
     folds = make_group_folds(development_df, n_splits=n_splits)
-    candidates = get_model_candidates(profile)
+    candidates = get_model_candidates(profile, verify_mlp_runtime=True)
     cv_rows: list[dict[str, Any]] = []
     oof_predictions: dict[str, np.ndarray] = {
         name: np.full(len(development_df), np.nan)
@@ -656,6 +705,12 @@ def train_conventional_experiment(
             numeric_features,
             categorical_features,
         ),
+        "target_bounds": bounds,
+        **dataset_provenance(
+            Path(config["dataset_path"]),
+            frame,
+            test_df,
+        ),
     }
     joblib.dump(bundle, artifact_path)
 
@@ -706,6 +761,12 @@ def train_conventional_experiment(
         "candidate": selected_name,
         "artifact": artifact_path.relative_to(run_dir).as_posix(),
         "diagnostic_only": bool(config["diagnostic_only"]),
+        "target_bounds": bounds,
+        **dataset_provenance(
+            Path(config["dataset_path"]),
+            frame,
+            test_df,
+        ),
     }
     return cv_rows + summary_rows, registry_entry
 
@@ -1323,27 +1384,56 @@ def write_run_configuration(
     profile: str,
     n_splits: int,
     mode: str,
+    registry: list[dict[str, Any]] | None = None,
+    mlp_available: bool | None = None,
 ) -> None:
     profile_config = get_training_profile(profile)
     task_configs = []
     for model_key, target, selected_mode in iter_task_mode_targets(mode):
         config = get_experiment_config(model_key, target, selected_mode)
-        task_configs.append(
-            {
+        task_config = {
                 "model_key": model_key,
                 "target": target,
                 "mode": selected_mode,
-                "dataset_path": str(config["dataset_path"]),
+                "dataset_path": Path(config["dataset_path"])
+                .resolve()
+                .relative_to(get_path().resolve())
+                .as_posix(),
                 "numeric_features": config["numeric_features"],
                 "categorical_features": config["categorical_features"],
                 "diagnostic_only": config["diagnostic_only"],
             }
-        )
+        if registry:
+            matching = next(
+                (
+                    entry
+                    for entry in registry
+                    if entry.get("route") == "ordinary_regression"
+                    and entry.get("model_key") == model_key
+                    and entry.get("target") == target
+                    and entry.get("mode") == selected_mode
+                ),
+                None,
+            )
+            if matching:
+                task_config.update(
+                    {
+                        key: matching[key]
+                        for key in [
+                            "dataset_sha256",
+                            "eligible_rows",
+                            "eligible_groups",
+                            "final_test_groups",
+                        ]
+                    }
+                )
+        task_configs.append(task_config)
     payload = {
         "run_name": run_name,
         "profile": profile,
         "mode_selection": mode,
         "profile_parameters": profile_config,
+        "mlp_runtime_available": mlp_available,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "random_state": 42,
         "test_fraction": 0.15,
@@ -1374,6 +1464,11 @@ def run_experiment_suite(
     mode: str = "process_only",
 ) -> Path:
     profile_config = get_training_profile(profile)
+    mlp_available = (
+        mlp_runtime_available()
+        if bool(profile_config.get("include_mlp", False))
+        else None
+    )
     modes = selected_modes(mode)
     if n_splits is None:
         n_splits = int(profile_config["default_cv_folds"])
@@ -1387,7 +1482,14 @@ def run_experiment_suite(
         )
     (run_dir / "tables").mkdir(parents=True, exist_ok=True)
     (run_dir / "models").mkdir(parents=True, exist_ok=True)
-    write_run_configuration(run_dir, run_name, profile, n_splits, mode)
+    write_run_configuration(
+        run_dir,
+        run_name,
+        profile,
+        n_splits,
+        mode,
+        mlp_available=mlp_available,
+    )
     all_rows: list[dict[str, Any]] = []
     registry: list[dict[str, Any]] = []
     physical_checks: list[dict[str, Any]] = []
@@ -1459,5 +1561,14 @@ def run_experiment_suite(
     (run_dir / "model_registry.json").write_text(
         json.dumps(registry, indent=2),
         encoding="utf-8",
+    )
+    write_run_configuration(
+        run_dir,
+        run_name,
+        profile,
+        n_splits,
+        mode,
+        registry=registry,
+        mlp_available=mlp_available,
     )
     return run_dir

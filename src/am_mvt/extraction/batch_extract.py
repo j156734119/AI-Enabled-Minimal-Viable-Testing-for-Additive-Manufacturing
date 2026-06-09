@@ -10,6 +10,8 @@ from am_mvt.extraction.openai_extractor import (
     extract_records_from_chunk,
     extract_records_from_pdf,
 )
+from am_mvt.parsing.document_pipeline import active_chunk_paths
+from am_mvt.utils.artifacts import sha256_file
 
 DEFAULT_SKIP_FILE = Path("config/llm_extraction_skip.txt")
 
@@ -143,7 +145,7 @@ def run_batch_extraction(
     chunk_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    all_chunk_files = sorted(chunk_dir.glob("*.txt"))
+    all_chunk_files = active_chunk_paths()
     skip_stems = load_extraction_skip_stems()
     skipped_by_policy = [
         path for path in all_chunk_files if chunk_is_skipped(path, skip_stems)
@@ -201,6 +203,9 @@ def run_batch_extraction(
                 chunk_id=chunk_path.stem,
                 model=model,
             )
+        result.setdefault("_metadata", {})["chunk_sha256"] = sha256_file(
+            chunk_path
+        )
 
         if not write_extraction_result(output_path, result):
             print("    API failed; existing JSON output was preserved.")

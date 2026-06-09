@@ -13,13 +13,11 @@ def parse_pdf_to_text(pdf_path: str | Path, output_path: str | Path) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    document = fitz.open(pdf_path)
-
     pages: list[str] = []
-
-    for page_index, page in enumerate(document):
-        page_text = page.get_text("text")
-        pages.append(f"\n\n--- Page {page_index + 1} ---\n\n{page_text}")
+    with fitz.open(pdf_path) as document:
+        for page_index, page in enumerate(document):
+            page_text = page.get_text("text")
+            pages.append(f"\n\n--- Page {page_index + 1} ---\n\n{page_text}")
 
     cleaned = clean_extracted_text("\n".join(pages))
     output_path.write_text(cleaned, encoding="utf-8")

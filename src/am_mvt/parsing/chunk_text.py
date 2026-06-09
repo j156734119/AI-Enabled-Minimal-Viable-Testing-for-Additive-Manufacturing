@@ -5,7 +5,17 @@ from pathlib import Path
 from am_mvt.config import get_path
 
 
-def chunk_text(text: str, max_chars: int = 6000, overlap: int = 500) -> list[str]:
+DEFAULT_CHUNK_SIZE = 3500
+DEFAULT_CHUNK_OVERLAP = 300
+
+
+def chunk_text(
+    text: str,
+    max_chars: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[str]:
+    if not text:
+        return []
     if max_chars <= overlap:
         raise ValueError("max_chars must be larger than overlap.")
 
@@ -30,8 +40,8 @@ def chunk_text(text: str, max_chars: int = 6000, overlap: int = 500) -> list[str
 def chunk_parsed_text_files(
     parsed_text_dir: str | Path | None = None,
     output_dir: str | Path | None = None,
-    max_chars: int = 6000,
-    overlap: int = 500,
+    max_chars: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[Path]:
     if parsed_text_dir is None:
         parsed_text_dir = get_path("data", "interim", "parsed_text")
@@ -55,7 +65,7 @@ def chunk_parsed_text_files(
         chunks = chunk_text(text, max_chars=max_chars, overlap=overlap)
 
         for index, chunk in enumerate(chunks):
-            output_path = output_dir / f"{text_file.stem}_chunk_{index:03d}.txt"
+            output_path = output_dir / f"{text_file.stem}_chunk_{index:04d}.txt"
             output_path.write_text(chunk, encoding="utf-8")
             output_files.append(output_path)
 

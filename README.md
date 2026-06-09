@@ -151,12 +151,14 @@ python scripts/02b_prepare_pdfs.py --apply    # move renamed PDFs into data/raw/
 python scripts/02c_export_literature_manifest.py  # export GitHub-safe article list
 python scripts/03_parse_documents.py
 python scripts/04_extract_with_llm.py --limit 0  # extract all pending chunks; successful JSON is skipped
+# or rebuild the combined CSV from existing active JSON without API calls:
+python scripts/04_extract_with_llm.py --combine-only
 python scripts/04b_audit_extractions.py          # deterministic admission audit
 python scripts/05_build_dataset.py
 python scripts/05b_merge_llm_into_master.py      # merges approved records only
-python scripts/06_train_models.py --run-name balanced_v1
-python scripts/07_explain_models.py --run-dir outputs/experiments/balanced_v1
-python scripts/08_generate_testing_matrix.py --run-dir outputs/experiments/balanced_v1
+python scripts/06_train_models.py --run-name balanced_v2
+python scripts/07_explain_models.py --run-dir outputs/experiments/balanced_v2
+python scripts/08_generate_testing_matrix.py --run-dir outputs/experiments/balanced_v2
 ```
 
 Step 01 always uses the OpenAI Responses API with the `web_search` tool:
@@ -179,14 +181,14 @@ Historical datasets, models, and experiment outputs can be reviewed and moved
 into the local ignored archive with:
 
 ```text
-python scripts/archive_legacy_artifacts.py
-python scripts/archive_legacy_artifacts.py --apply
+python scripts/archive_legacy_artifacts.py --keep-experiment balanced_v2
+python scripts/archive_legacy_artifacts.py --keep-experiment balanced_v2 --apply
 ```
 
-The first command is a dry run. The applied archive writes
-`archive/legacy_20260608/archive_manifest.csv` with source paths, archive paths,
-file sizes, modification times, and SHA-256 hashes. The current
-`outputs/experiments/cpu_fast_v1/` run is retained in place.
+The first command is a dry run. The run named by `--keep-experiment` is
+retained in place. Archive names use UTC timestamps by default, and every
+moved file is recorded in `archive_manifest.csv` with its source path,
+archive path, size, modification time, and SHA-256.
 
 Place newly downloaded PDFs in:
 
@@ -224,13 +226,17 @@ docs/literature_manifest.csv
 ```
 
 The manifest lists article title, journal, year, DOI, source links, local
-standardised filename, verification status, and parsing readiness. It contains
+standardised filename, content SHA-256, canonical source, duplicate status,
+verification status, and parsing readiness. Step 03 parses canonical PDFs only,
+uses the repository skip list, and writes
+`data/interim/active_chunk_manifest.csv`. Steps 04 and 04b ignore JSON outputs
+that are not in that active manifest. The literature manifest contains
 metadata only and does not include or upload the PDF files.
 
 For a training-only run, stop after:
 
 ```
-python scripts/06_train_models.py --run-name balanced_v1
+python scripts/06_train_models.py --run-name balanced_v2
 ```
 
 Step 07 calculates holdout permutation importance, grouped error analysis,
@@ -244,12 +250,14 @@ elimination.
 The default command is equivalent to:
 
 ```text
-python scripts/06_train_models.py --run-name balanced_v1 --profile balanced --mode process_only --cv-folds 5
+python scripts/06_train_models.py --run-name balanced_v2 --profile balanced --mode process_only --cv-folds 5
 ```
 
 The balanced profile uses 160 Random Forest trees, 240 XGBoost estimators, one
 lightweight CatBoost, and an MLP with hidden layers 128, 64, and 32. The MLP is
 an additional comparison model and is not forced to become the selected model.
+It is preceded by an isolated NumPy/BLAS probe so a broken Windows numerical
+runtime cannot terminate the five formal target-training jobs.
 
 Run the auxiliary reduced-testing mode separately when needed:
 
@@ -289,7 +297,7 @@ are eligible for one PDF-vision retry.
 After training, batch-predict proposed experiment scenarios with:
 
 ```text
-python scripts/06b_predict_scenarios.py --run-dir outputs/experiments/balanced_v1 --input examples/prediction_scenarios_template.csv --output outputs/experiments/balanced_v1/scenario_predictions.csv --mode all
+python scripts/06b_predict_scenarios.py --run-dir outputs/experiments/balanced_v2 --input examples/prediction_scenarios_template.csv --output outputs/experiments/balanced_v2/scenario_predictions.csv --mode all
 ```
 
 The output reports 90% out-of-fold conformal intervals for ordinary and

@@ -9,6 +9,7 @@ from am_mvt.modelling.model_explanation import (
     _tree_shap_array,
     combination_coverage_rows,
     compare_feature_importance,
+    evaluation_frames,
     grouped_error_rows,
     permutation_importance_rows,
     sensitivity_rows,
@@ -62,6 +63,26 @@ def test_permutation_importance_ranks_signal_above_noise():
     ]
     assert importance["signal"] > importance["noise"]
     assert result["importance_fraction"].sum() == pytest.approx(1.0)
+
+
+def test_evaluation_rejects_changed_modelling_view(tmp_path, monkeypatch):
+    dataset = tmp_path / "data" / "processed" / "view.csv"
+    dataset.parent.mkdir(parents=True)
+    dataset.write_text("target\n1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "am_mvt.modelling.model_explanation.get_path",
+        lambda *parts: tmp_path.joinpath(*parts),
+    )
+    bundle = {
+        "model_key": "model1_uts",
+        "target": "uts_MPa",
+        "mode": "process_only",
+        "dataset_path": "data/processed/view.csv",
+        "dataset_sha256": "0" * 64,
+    }
+
+    with pytest.raises(RuntimeError, match="changed after training"):
+        evaluation_frames(bundle)
 
 
 def test_grouped_errors_require_minimum_rows():

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import re
-
 
 def clean_extracted_text(text: str) -> str:
-    text = text.replace("\x00", " ")
-    text = re.sub(r"-\n", "", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"[ \t]+", " ", text)
-    return text.strip()
+    """Preserve the historical Step 03 output used by existing LLM JSON."""
+    return "\n".join(
+        stripped
+        for line in text.replace("\x00", " ").splitlines()
+        if (stripped := line.strip())
+    )

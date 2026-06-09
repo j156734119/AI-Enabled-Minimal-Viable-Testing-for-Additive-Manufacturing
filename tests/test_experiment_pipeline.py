@@ -144,6 +144,18 @@ def test_balanced_profile_adds_three_layer_mlp():
     assert candidates["mlp_128_64_32"]["dense"] is True
 
 
+def test_mlp_runtime_failure_removes_only_mlp(monkeypatch):
+    monkeypatch.setattr(
+        "am_mvt.modelling.experiment_training.mlp_runtime_available",
+        lambda: False,
+    )
+    candidates = get_model_candidates("balanced", verify_mlp_runtime=True)
+
+    assert "mlp_128_64_32" not in candidates
+    assert "random_forest" in candidates
+    assert "linear_l2_sgd" in candidates
+
+
 def test_balanced_defaults_to_process_only_and_five_folds():
     signature = inspect.signature(run_experiment_suite)
     assert signature.parameters["profile"].default == "balanced"

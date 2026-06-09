@@ -2,23 +2,31 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from am_mvt.config import get_path
+from am_mvt.utils.artifacts import ensure_within_project, sha256_file
 
 
-ARCHIVE_NAME = "legacy_20260608"
-CURRENT_EXPERIMENT = "cpu_fast_v1"
 LEGACY_DATA_FILES = [
     "data/processed/sources.csv",
     "data/processed/build_conditions.csv",
     "data/processed/mechanical_tests.csv",
     "data/processed/extraction_audit.csv",
     "data/processed/modelling_dataset_validation_report.csv",
+]
+DUPLICATE_SOURCE_PREFIXES = [
+    "039_addma_2022_316l_energy_density_porosity_structure_tensile_produced_laser_powder_bed",
+    "042_addma_2025_alsi10mg_fatigue_response_laser_powder_bed_fusion_influence_build_orientation",
+    "045_addma_2025_alsi10mg_impact_different_pore_types_tensile_fatigue_produced_laser_powder",
+]
+CANONICAL_INTERIM_FILES = [
+    "data/interim/llm_extracted_records.csv",
+    "data/interim/llm_extraction_audit.csv",
+    "data/interim/llm_extraction_audit_review.csv",
 ]
 
 
@@ -37,105 +45,112 @@ class ManifestRow:
     sha256: str
 
 
+def default_archive_name() -> str:
+    return "cleanup_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Preview or archive explicitly approved legacy datasets, models, "
-            "and experiment results. The default is a non-mutating dry run."
-        )
+        description="Preview or archive explicitly approved legacy artifacts."
     )
-    parser.add_argument(
-        "--apply",
-        action="store_true",
-        help="Move the approved legacy artifacts and write archive_manifest.csv.",
-    )
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--archive-name", default=default_archive_name())
+    parser.add_argument("--keep-experiment", default="balanced_v2")
+    parser.add_argument("--include-current-processed", action="store_true")
+    parser.add_argument("--include-duplicate-derivatives", action="store_true")
     return parser.parse_args(argv)
 
 
-def ensure_within_project(path: Path) -> Path:
-    project_root = get_path().resolve()
-    resolved = path.resolve()
-    if resolved != project_root and project_root not in resolved.parents:
-        raise ValueError(f"Path is outside the project workspace: {resolved}")
-    return resolved
+def _destination(archive_root: Path, source: Path) -> Path:
+    return archive_root / source.relative_to(get_path())
 
 
-def build_move_plan() -> list[MoveItem]:
-    archive_root = get_path("archive", ARCHIVE_NAME)
-    moves: list[MoveItem] = []
+def build_move_plan(
+    *,
+    archive_name: str = "cleanup_test",
+    keep_experiment: str = "balanced_v2",
+    include_current_processed: bool = False,
+    include_duplicate_derivatives: bool = False,
+) -> list[MoveItem]:
+    archive_root = get_path("archive", archive_name)
+    sources: list[Path] = []
+    processed_dir = get_path("data", "processed")
 
-    data_sources = [
-        *sorted(get_path("data", "processed").glob("master_modelling_dataset_backup_*.csv")),
-        *(get_path(*relative.split("/")) for relative in LEGACY_DATA_FILES),
-    ]
-    for source in data_sources:
-        if source.is_file():
-            moves.append(
-                MoveItem(
-                    source=source,
-                    destination=archive_root / "data" / source.name,
-                )
+    sources.extend(
+        path
+        for path in (
+            get_path(*relative.split("/")) for relative in LEGACY_DATA_FILES
+        )
+        if path.is_file()
+    )
+    sources.extend(
+        sorted(processed_dir.glob("master_modelling_dataset_backup_*.csv"))
+        if processed_dir.exists()
+        else []
+    )
+    if include_current_processed and processed_dir.exists():
+        sources.extend(sorted(processed_dir.glob("*.csv")))
+        sources.extend(
+            path
+            for path in (
+                get_path(*relative.split("/"))
+                for relative in CANONICAL_INTERIM_FILES
             )
-
-    models_dir = get_path("outputs", "models")
-    for source in sorted(models_dir.iterdir()):
-        if source.name != ".gitkeep" and source.is_file():
-            moves.append(
-                MoveItem(
-                    source=source,
-                    destination=archive_root / "models" / source.name,
-                )
-            )
-
-    tables_dir = get_path("outputs", "tables")
-    for source in sorted(tables_dir.glob("project_*.csv")):
-        moves.append(
-            MoveItem(
-                source=source,
-                destination=archive_root / "results" / "tables" / source.name,
-            )
+            if path.is_file()
         )
 
+    models_dir = get_path("outputs", "models")
+    if models_dir.exists():
+        sources.extend(
+            path
+            for path in models_dir.iterdir()
+            if path.is_file() and path.name != ".gitkeep"
+        )
+
+    tables_dir = get_path("outputs", "tables")
+    if tables_dir.exists():
+        sources.extend(sorted(tables_dir.glob("project_*.csv")))
+
     experiments_dir = get_path("outputs", "experiments")
-    for source in sorted(experiments_dir.iterdir()):
-        if source.is_dir() and source.name != CURRENT_EXPERIMENT:
-            moves.append(
-                MoveItem(
-                    source=source,
-                    destination=archive_root / "results" / "experiments" / source.name,
-                )
-            )
+    if experiments_dir.exists():
+        sources.extend(
+            path
+            for path in experiments_dir.iterdir()
+            if path.is_dir() and path.name != keep_experiment
+        )
 
-    return moves
+    if include_duplicate_derivatives:
+        for directory in [
+            get_path("data", "interim", "parsed_text"),
+            get_path("data", "interim", "text_chunks"),
+            get_path("data", "interim", "llm_outputs"),
+        ]:
+            if not directory.exists():
+                continue
+            for prefix in DUPLICATE_SOURCE_PREFIXES:
+                sources.extend(sorted(directory.glob(f"{prefix}*")))
 
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    unique_sources = sorted({path.resolve() for path in sources if path.exists()})
+    return [
+        MoveItem(source=source, destination=_destination(archive_root, source))
+        for source in unique_sources
+    ]
 
 
 def build_manifest_rows(moves: list[MoveItem]) -> list[ManifestRow]:
     project_root = get_path().resolve()
     rows: list[ManifestRow] = []
-
     for move in moves:
-        source_files = (
-            sorted(move.source.rglob("*"))
-            if move.source.is_dir()
-            else [move.source]
-        )
-        for source_file in source_files:
+        files = sorted(move.source.rglob("*")) if move.source.is_dir() else [move.source]
+        for source_file in files:
             if not source_file.is_file():
                 continue
-            relative_inside_source = (
+            suffix = (
                 source_file.relative_to(move.source)
                 if move.source.is_dir()
                 else Path()
             )
-            destination_file = move.destination / relative_inside_source
+            destination_file = move.destination / suffix
             stat = source_file.stat()
             rows.append(
                 ManifestRow(
@@ -149,27 +164,28 @@ def build_manifest_rows(moves: list[MoveItem]) -> list[ManifestRow]:
                     sha256=sha256_file(source_file),
                 )
             )
-
     return rows
 
 
 def validate_move_plan(moves: list[MoveItem]) -> None:
-    seen_destinations: set[Path] = set()
-
+    destinations: set[Path] = set()
     for move in moves:
-        source = ensure_within_project(move.source)
-        destination = ensure_within_project(move.destination)
+        source = ensure_within_project(move.source, project_root=get_path())
+        destination = ensure_within_project(
+            move.destination,
+            project_root=get_path(),
+        )
         if not source.exists():
-            raise FileNotFoundError(f"Legacy artifact disappeared: {source}")
+            raise FileNotFoundError(f"Artifact disappeared: {source}")
         if destination.exists():
-            raise FileExistsError(f"Archive destination already exists: {destination}")
-        if destination in seen_destinations:
+            raise FileExistsError(f"Archive destination exists: {destination}")
+        if destination in destinations:
             raise ValueError(f"Duplicate archive destination: {destination}")
-        seen_destinations.add(destination)
+        destinations.add(destination)
 
 
-def write_manifest(rows: list[ManifestRow]) -> Path:
-    manifest_path = get_path("archive", ARCHIVE_NAME, "archive_manifest.csv")
+def write_manifest(rows: list[ManifestRow], archive_name: str) -> Path:
+    manifest_path = get_path("archive", archive_name, "archive_manifest.csv")
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     with manifest_path.open("w", newline="", encoding="utf-8-sig") as file:
         writer = csv.DictWriter(file, fieldnames=list(asdict(rows[0]).keys()))
@@ -178,37 +194,40 @@ def write_manifest(rows: list[ManifestRow]) -> Path:
     return manifest_path
 
 
-def apply_move_plan(moves: list[MoveItem], rows: list[ManifestRow]) -> Path:
+def apply_move_plan(
+    moves: list[MoveItem],
+    rows: list[ManifestRow],
+    archive_name: str = "cleanup_test",
+) -> Path:
+    if not rows:
+        raise RuntimeError("No files matched the approved archive whitelist.")
     for move in moves:
         move.destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(move.source), str(move.destination))
-    return write_manifest(rows)
+    return write_manifest(rows, archive_name)
 
 
 def main() -> None:
     args = parse_args()
-    moves = build_move_plan()
+    moves = build_move_plan(
+        archive_name=args.archive_name,
+        keep_experiment=args.keep_experiment,
+        include_current_processed=args.include_current_processed,
+        include_duplicate_derivatives=args.include_duplicate_derivatives,
+    )
     validate_move_plan(moves)
     rows = build_manifest_rows(moves)
-
-    action = "APPLY" if args.apply else "DRY RUN"
-    print(f"{action}: {len(moves)} move items, {len(rows)} files")
+    print(f"{'APPLY' if args.apply else 'DRY RUN'}: {len(moves)} items, {len(rows)} files")
     for move in moves:
         print(
             f"{move.source.relative_to(get_path()).as_posix()} -> "
             f"{move.destination.relative_to(get_path()).as_posix()}"
         )
-
     if not args.apply:
-        print("\nNo files were moved. Re-run with --apply after reviewing the list.")
+        print("No files were moved.")
         return
-
-    if not rows:
-        raise RuntimeError("No legacy files matched the approved archive whitelist.")
-
-    manifest_path = apply_move_plan(moves, rows)
-    print(f"\nArchive complete: {manifest_path.parent}")
-    print(f"Manifest: {manifest_path}")
+    manifest = apply_move_plan(moves, rows, args.archive_name)
+    print(f"Archive complete: {manifest}")
 
 
 if __name__ == "__main__":

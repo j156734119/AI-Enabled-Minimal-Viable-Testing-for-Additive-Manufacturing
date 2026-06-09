@@ -27,6 +27,8 @@ from am_mvt.modelling.experiment_training import (
     normalise_runout,
     refit_candidate_on_development,
 )
+from am_mvt.config import get_path
+from am_mvt.utils.artifacts import sha256_file
 
 
 GROUP_COLUMNS = [
@@ -67,21 +69,32 @@ def ordinary_entries(run_dir: Path, mode: str) -> list[dict[str, Any]]:
 
 
 def evaluation_frames(
-    model_key: str,
-    target: str,
-    mode: str,
+    bundle: dict[str, Any],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    model_key = str(bundle["model_key"])
+    target = str(bundle["target"])
+    mode = str(bundle["mode"])
     config = get_experiment_config(model_key, target, mode)
+    dataset_path = get_path(*Path(str(bundle["dataset_path"])).parts)
+    expected_sha256 = str(bundle.get("dataset_sha256", ""))
+    actual_sha256 = sha256_file(dataset_path)
+    if expected_sha256 and actual_sha256 != expected_sha256:
+        raise RuntimeError(
+            "Modelling view changed after training: "
+            f"{dataset_path}. Expected SHA-256 {expected_sha256}, "
+            f"found {actual_sha256}. Retrain before running Step 07."
+        )
     frame = load_experiment_frame(
-        config["dataset_path"],
+        dataset_path,
         target,
-        config["target_bounds"].get(target),
+        bundle.get("target_bounds", config["target_bounds"].get(target)),
     )
-    final_holdout_groups = None
+    final_holdout_groups = set(bundle.get("final_test_groups", [])) or None
 
     if model_key == "model2_sn_fatigue":
         frame = filter_valid_fatigue_loading(frame)
-        final_holdout_groups = select_final_holdout_groups(frame)
+        if final_holdout_groups is None:
+            final_holdout_groups = select_final_holdout_groups(frame)
         runout = normalise_runout(frame["runout"])
         frame = frame.loc[runout.eq(False)].reset_index(drop=True)
 
@@ -1181,11 +1194,7 @@ def run_model_explanation(
 
     for entry in ordinary_entries(run_dir, mode):
         bundle = joblib.load(run_dir / entry["artifact"])
-        frame, test_df = evaluation_frames(
-            entry["model_key"],
-            entry["target"],
-            entry["mode"],
-        )
+        frame, test_df = evaluation_frames(bundle)
         importance_parts.append(
             permutation_importance_rows(
                 bundle,

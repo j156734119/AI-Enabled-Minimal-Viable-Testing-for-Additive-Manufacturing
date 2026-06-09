@@ -11,6 +11,7 @@ from am_mvt.extraction.batch_extract import (
     select_chunks_for_extraction,
     write_extraction_result,
 )
+from am_mvt.extraction.postprocess import load_llm_json_outputs
 
 
 def write_output(path, *, error=None):
@@ -111,3 +112,22 @@ def test_configured_pdf_stem_is_skipped(tmp_path):
         tmp_path / "paper_one_chunk_0000.txt",
         stems,
     )
+
+
+def test_postprocess_ignores_orphan_json(tmp_path, monkeypatch):
+    active = tmp_path / "active_chunk_0000.json"
+    orphan = tmp_path / "orphan_chunk_0000.json"
+    payload = {
+        "records": [],
+        "_metadata": {"source_file": "paper.pdf", "chunk_id": active.stem},
+    }
+    active.write_text(json.dumps(payload), encoding="utf-8")
+    orphan.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "am_mvt.extraction.postprocess.load_active_chunk_manifest",
+        lambda: __import__("pandas").DataFrame({"chunk_id": [active.stem]}),
+    )
+
+    result = load_llm_json_outputs(tmp_path)
+
+    assert result.empty
