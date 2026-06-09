@@ -11,7 +11,7 @@ sparse or high-risk regions.
 # Preconditions
 
 - Feature relevance, coverage, metrics, and audited sources are available.
-- This stage is specification-only until recommendation logic is implemented.
+- Step 07 relationship and coverage outputs are available.
 
 # Inputs
 
@@ -24,6 +24,8 @@ sparse or high-risk regions.
 3. Treat fatigue, defects, porosity, surface, stress amplitude, and R-ratio
    conservatively.
 4. Assign confidence and validation requirements.
+5. Preserve validation tests for sparse defect, surface, and heat-treatment
+   regions rather than presenting them as reduction opportunities.
 
 # Decision Gates
 

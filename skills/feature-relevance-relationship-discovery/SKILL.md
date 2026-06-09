@@ -11,19 +11,19 @@ claims.
 # Preconditions
 
 - Model metrics, pipelines, modelling views, and audited literature are available.
-- This stage is partially implemented; `scripts/07_explain_models.py` remains a
-  placeholder for advanced explanation outputs.
+- A completed Step 06 run with ordinary model artifacts is available.
 
 # Inputs
 
-- Metrics, feature importance, modelling views, and coverage summaries.
+- Step 06 metrics, model artifacts, and modelling views.
 
 # Procedure
 
-1. Compare feature signals across supported models.
-2. Check direction against physical sanity summaries.
-3. Record data coverage and source diversity.
-4. Separate model support from literature support.
+1. Calculate holdout permutation importance on original input features.
+2. Report errors by alloy family, process, orientation, and surface condition.
+3. Calculate feature coverage and limited sensitivity scans.
+4. Check direction against physical sanity summaries.
+5. Separate model support from literature support.
 
 # Decision Gates
 
@@ -32,7 +32,8 @@ claims.
 
 # Outputs
 
-- Ranked variables, relationship candidates, and coverage-risk notes.
+- Ranked variables, relationship candidates, coverage-risk notes, grouped
+  errors, sensitivity tables, and figures.
 
 # Validation
 

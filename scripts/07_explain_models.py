@@ -1,23 +1,47 @@
-"""
-Step 07: Explain trained models.
+"""Step 07: explain trained models and quantify evidence coverage."""
 
-This script will later generate feature importance, SHAP values, and partial
-dependence analysis.
-"""
+from __future__ import annotations
 
-from am_mvt.config import get_path
+import argparse
+
+from am_mvt.modelling.model_explanation import run_model_explanation
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate permutation importance, grouped errors, coverage, "
+            "sensitivity, and relationship-evidence outputs."
+        )
+    )
+    parser.add_argument(
+        "--run-dir",
+        default="outputs/experiments/cpu_fast_v1",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["process_only", "reduced_testing"],
+        default="process_only",
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="Permutation repeats per feature.",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
-    figure_dir = get_path("outputs", "figures")
-    table_dir = get_path("outputs", "tables")
-
-    figure_dir.mkdir(parents=True, exist_ok=True)
-    table_dir.mkdir(parents=True, exist_ok=True)
-
-    print("Step 07 placeholder: model explanation will be implemented later.")
-    print(f"Figure output folder: {figure_dir}")
-    print(f"Table output folder: {table_dir}")
+    args = parse_args()
+    outputs = run_model_explanation(
+        args.run_dir,
+        mode=args.mode,
+        repeats=args.repeats,
+    )
+    print("Step 07 complete: model explanation and relationship evidence generated.")
+    for name, path in outputs.items():
+        print(f"{name}: {path}")
 
 
 if __name__ == "__main__":

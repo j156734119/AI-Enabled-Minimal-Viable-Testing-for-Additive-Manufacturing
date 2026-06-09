@@ -11,8 +11,8 @@
 | dataset-integration | operational |
 | modelling-view-generation | operational |
 | model-comparison | operational |
-| feature-relevance-relationship-discovery | partially implemented |
-| reduced-testing-matrix-recommendation | specification only |
+| feature-relevance-relationship-discovery | operational |
+| reduced-testing-matrix-recommendation | operational |
 
 ## Canonical Outputs
 
@@ -27,6 +27,8 @@
 | Merge summary | `data/processed/llm_merge_summary.csv` |
 | Modelling views | `data/processed/view_model*.csv` |
 | Model evidence | `outputs/tables/project_*.csv` |
+| Model explanation | `outputs/experiments/<run_name>/tables/feature_importance.csv` |
+| Relationship evidence | `outputs/experiments/<run_name>/tables/relationship_evidence.csv` |
 | Testing matrix | `outputs/tables/reduced_testing_matrix.csv` |
 
 Source screening is performed only through the OpenAI Responses API

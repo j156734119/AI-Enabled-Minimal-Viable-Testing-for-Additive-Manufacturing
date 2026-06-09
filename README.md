@@ -154,6 +154,8 @@ python scripts/04b_audit_extractions.py          # deterministic admission audit
 python scripts/05_build_dataset.py
 python scripts/05b_merge_llm_into_master.py      # merges approved records only
 python scripts/06_train_models.py --run-name cpu_fast_v1
+python scripts/07_explain_models.py --run-dir outputs/experiments/cpu_fast_v1
+python scripts/08_generate_testing_matrix.py --run-dir outputs/experiments/cpu_fast_v1
 ```
 
 Step 01 always uses the OpenAI Responses API with the `web_search` tool:
@@ -228,7 +230,12 @@ For the current early milestone, stop after:
 python scripts/06_train_models.py --run-name cpu_fast_v1
 ```
 
-Steps 07 and 08 are reserved for the later interpretation and reduced testing matrix stage.
+Step 07 calculates holdout permutation importance, grouped error analysis,
+feature coverage, limited sensitivity scans, and a conservative relationship
+evidence table. Step 08 converts that evidence into a reduced but
+representative testing matrix. Sparse defect, surface, and heat-treatment
+regions are marked as requiring validation rather than recommended for test
+elimination.
 
 The default command is equivalent to:
 
