@@ -18,6 +18,7 @@ PROVENANCE_COLUMNS = [
     "doi",
     "source_title",
     "source_year",
+    "modelling_group_id",
 ]
 
 MODEL1_FEATURE_COLUMNS = [
@@ -43,9 +44,16 @@ MODEL1_FEATURE_COLUMNS = [
 ]
 
 MODEL1_TARGET_COLUMNS = [
-    "yield_strength_MPa",
     "uts_MPa",
+]
+
+MODEL3_TARGET_COLUMNS = [
     "elongation_percent",
+    "yield_strength_MPa",
+]
+
+MODEL4_TARGET_COLUMNS = [
+    "youngs_modulus_GPa",
 ]
 
 MODEL2_FEATURE_COLUMNS = [
@@ -90,6 +98,9 @@ VIEW_COLUMNS = list(
         + ["task_type", "sample_weight"]
         + MODEL1_FEATURE_COLUMNS
         + MODEL1_TARGET_COLUMNS
+        + MODEL3_TARGET_COLUMNS
+        + MODEL4_TARGET_COLUMNS
+        + ["hardness_HV"]
         + MODEL2_FEATURE_COLUMNS
         + MODEL2_TARGET_COLUMNS
     )
@@ -107,6 +118,8 @@ NUMERIC_COLUMNS = [
     "yield_strength_MPa",
     "uts_MPa",
     "elongation_percent",
+    "youngs_modulus_GPa",
+    "hardness_HV",
     "stress_amplitude_MPa",
     "max_stress_MPa",
     "r_ratio",
@@ -204,11 +217,30 @@ def normalise_group_key(df: pd.DataFrame) -> pd.Series:
     return source_id.fillna("unknown_source") + "::" + dataset_id
 
 
-def build_model1_static_view(master_df: pd.DataFrame) -> pd.DataFrame:
+def normalise_split_group_key(df: pd.DataFrame) -> pd.Series:
+    """Keep records from the same paper or experimental dataset in one split."""
+    source_id = df.get(
+        "source_id",
+        pd.Series("unknown_source", index=df.index, dtype="string"),
+    ).astype("string")
+    source_id = source_id.fillna("unknown_source").str.strip()
+
+    dataset_id = df.get(
+        "dataset_id",
+        pd.Series(pd.NA, index=df.index, dtype="string"),
+    ).astype("string")
+    dataset_id = dataset_id.str.strip().replace("", pd.NA)
+
+    return source_id + "::" + dataset_id.fillna(source_id)
+
+
+def build_static_target_view(
+    master_df: pd.DataFrame,
+    model_key: str,
+    target_columns: list[str],
+) -> pd.DataFrame:
     """
-    Model 1:
-    AM material/process/porosity/surface variables
-    -> tensile/static mechanical properties.
+    Build one static mechanical-property modelling view.
 
     This view keeps one best row per source_id + dataset_id to avoid duplicated
     parameter rows from fatigue curve joins.
@@ -224,13 +256,22 @@ def build_model1_static_view(master_df: pd.DataFrame) -> pd.DataFrame:
     ).str.lower()
 
     is_static = (
-        task_type.isin(["static_tensile", "parameter_static", "model1_static"])
+        task_type.isin(
+            [
+                "static_tensile",
+                "parameter_static",
+                "model1_static",
+                "model1_uts",
+                "model3_elongation_yield",
+                "model4_elastic_modulus",
+            ]
+        )
         | source_sheet.str.contains("parameter", na=False)
     )
 
     static_df = df.loc[is_static].copy()
 
-    target_non_missing = count_non_missing(static_df, MODEL1_TARGET_COLUMNS)
+    target_non_missing = count_non_missing(static_df, target_columns)
     static_df = static_df.loc[target_non_missing > 0].copy()
 
     if static_df.empty:
@@ -240,7 +281,7 @@ def build_model1_static_view(master_df: pd.DataFrame) -> pd.DataFrame:
     static_df["_group_key"] = normalise_group_key(static_df)
     static_df["_information_score"] = count_non_missing(
         static_df,
-        MODEL1_FEATURE_COLUMNS + MODEL1_TARGET_COLUMNS,
+        MODEL1_FEATURE_COLUMNS + target_columns,
     )
 
     static_df = static_df.sort_values(
@@ -251,10 +292,51 @@ def build_model1_static_view(master_df: pd.DataFrame) -> pd.DataFrame:
     static_df = static_df.drop_duplicates(subset=["_group_key"], keep="first")
     static_df = static_df.drop(columns=["_group_key", "_information_score"])
 
-    static_df["task_type"] = "model1_static"
+    static_df["task_type"] = model_key
     static_df["sample_weight"] = 1.0
+    static_df["modelling_group_id"] = normalise_split_group_key(static_df)
 
     return ensure_view_columns(static_df)
+
+
+def build_model1_uts_view(master_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Model 1:
+    AM material/process/porosity/surface variables -> UTS.
+    """
+    return build_static_target_view(
+        master_df=master_df,
+        model_key="model1_uts",
+        target_columns=MODEL1_TARGET_COLUMNS,
+    )
+
+
+def build_model3_elongation_yield_view(master_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Model 3:
+    AM material/process/porosity/surface variables -> elongation and yield.
+
+    Qualitative fracture evidence is intentionally excluded from modelling
+    views because public labels are sparse, inconsistent, and not expert
+    ground truth.
+    """
+    return build_static_target_view(
+        master_df=master_df,
+        model_key="model3_elongation_yield",
+        target_columns=MODEL3_TARGET_COLUMNS,
+    )
+
+
+def build_model4_elastic_modulus_view(master_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Model 4:
+    AM material/process/porosity/surface variables -> Young's/elastic modulus.
+    """
+    return build_static_target_view(
+        master_df=master_df,
+        model_key="model4_elastic_modulus",
+        target_columns=MODEL4_TARGET_COLUMNS,
+    )
 
 
 def select_evenly_spaced_rows(
@@ -407,6 +489,7 @@ def build_model2_sn_fatigue_view(
 
     sn_df = add_equal_dataset_weights(sn_df)
     sn_df["task_type"] = "model2_sn_fatigue"
+    sn_df["modelling_group_id"] = normalise_split_group_key(sn_df)
 
     return ensure_view_columns(sn_df)
 
@@ -417,15 +500,19 @@ def build_model_views(
 ) -> dict[str, pd.DataFrame]:
     master_df = read_master_dataset(master_path)
 
-    model1_df = build_model1_static_view(master_df)
+    model1_df = build_model1_uts_view(master_df)
     model2_df = build_model2_sn_fatigue_view(
         master_df,
         max_rows_per_dataset_id=max_sn_rows_per_dataset_id,
     )
+    model3_df = build_model3_elongation_yield_view(master_df)
+    model4_df = build_model4_elastic_modulus_view(master_df)
 
     return {
-        "model1_static": model1_df,
+        "model1_uts": model1_df,
         "model2_sn_fatigue": model2_df,
+        "model3_elongation_yield": model3_df,
+        "model4_elastic_modulus": model4_df,
     }
 
 
@@ -442,12 +529,17 @@ def make_view_summary(views: dict[str, pd.DataFrame]) -> pd.DataFrame:
             "source_count": df["source_id"].nunique(dropna=True)
             if "source_id" in df.columns
             else 0,
+            "modelling_group_count": df["modelling_group_id"].nunique(dropna=True)
+            if "modelling_group_id" in df.columns
+            else 0,
         }
 
         for target in [
             "yield_strength_MPa",
             "uts_MPa",
             "elongation_percent",
+            "youngs_modulus_GPa",
+            "hardness_HV",
             "log10_fatigue_life_cycles",
             "fatigue_life_cycles",
             "runout",
@@ -473,8 +565,12 @@ def save_modelling_views(
     )
 
     output_paths = {
-        "model1_static": processed_dir / "view_model1_static.csv",
+        "model1_uts": processed_dir / "view_model1_uts.csv",
         "model2_sn_fatigue": processed_dir / "view_model2_sn_fatigue.csv",
+        "model3_elongation_yield": processed_dir
+        / "view_model3_elongation_yield.csv",
+        "model4_elastic_modulus": processed_dir
+        / "view_model4_elastic_modulus.csv",
     }
 
     for view_name, output_path in output_paths.items():

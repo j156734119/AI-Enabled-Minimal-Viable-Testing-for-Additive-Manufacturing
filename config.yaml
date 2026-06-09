@@ -1,9 +1,5 @@
 project:
   title: "AI-Enabled Minimal Viable Testing for Additive Manufacturing"
-  student_name: "Fangxing Lin"
-  student_id: "5736310"
-  programme: "MSc Applied Artificial Intelligence"
-  supervisor: "Greg Gibbons"
 
 paths:
   raw_data: "data/raw"
@@ -70,7 +66,6 @@ schema:
     - "stress_amplitude_MPa"
     - "r_ratio"
     - "runout"
-    - "failure_mode"
 
 openai:
   model: "gpt-4o-mini"

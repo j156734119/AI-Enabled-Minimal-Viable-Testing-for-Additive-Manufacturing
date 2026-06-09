@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dataset Integration"
+  short_description: "Integrate approved evidence into the AM dataset"
+  default_prompt: "Use $dataset-integration to merge approved records into the master dataset."

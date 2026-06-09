@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -8,14 +9,23 @@ import pandas as pd
 
 from am_mvt.cleaning.project_schema import MASTER_COLUMNS, standardise_table_to_project_schema
 from am_mvt.config import get_path
+from am_mvt.utils.values import is_missing, parse_boolean
 
 
 LLM_AUDIT_EXTRA_COLUMNS = [
     "source_title",
     "doi",
+    "journal",
     "page_or_section",
+    "table_or_figure",
     "evidence_text",
     "confidence",
+    "extraction_notes",
+    "powder_feedstock",
+    "specimen_geometry",
+    "test_standard",
+    "strain_rate_s",
+    "runout_cycles",
 ]
 
 
@@ -83,24 +93,27 @@ def normalise_runout(value: Any) -> Any:
     """
     Convert common runout values into booleans where possible.
     """
-    if value is None:
+    if is_missing(value):
         return pd.NA
 
-    try:
-        if pd.isna(value):
-            return pd.NA
-    except Exception:
-        pass
+    parsed = parse_boolean(value)
+    return value if parsed is None else parsed
 
-    text = str(value).strip().lower()
 
-    if text in {"true", "yes", "y", "1", "runout", "run-out", "survived"}:
-        return True
+def normalise_pdf_filename(value: Any) -> str:
+    filename = Path(str(value or "")).name
 
-    if text in {"false", "no", "n", "0", "failure", "failed"}:
-        return False
+    while filename.lower().endswith(".pdf.pdf"):
+        filename = filename[:-4]
 
-    return value
+    return filename
+
+
+def source_id_from_pdf_filename(value: Any) -> str:
+    filename = normalise_pdf_filename(value)
+    stem = filename[:-4] if filename.lower().endswith(".pdf") else filename
+    source_id = re.sub(r"[^a-zA-Z0-9]+", "_", stem).strip("_").lower()
+    return source_id or "unknown_literature_source"
 
 
 def extract_records_from_llm_json(json_path: Path) -> list[dict[str, Any]]:
@@ -115,7 +128,8 @@ def extract_records_from_llm_json(json_path: Path) -> list[dict[str, Any]]:
 
     metadata = data.get("_metadata", {})
     chunk_id = metadata.get("chunk_id", json_path.stem)
-    source_file = metadata.get("source_file", "")
+    source_file = normalise_pdf_filename(metadata.get("source_file", ""))
+    source_id = source_id_from_pdf_filename(source_file)
 
     normalised_records: list[dict[str, Any]] = []
 
@@ -125,9 +139,14 @@ def extract_records_from_llm_json(json_path: Path) -> list[dict[str, Any]]:
 
         output_record = record.copy()
 
-        output_record["source_id"] = "llm_literature_extraction"
-        output_record["source_name"] = "LLM-assisted open-access literature extraction"
-        output_record["source_file"] = output_record.get("source_file") or source_file
+        output_record["source_id"] = source_id
+        output_record["source_name"] = (
+            output_record.get("source_title")
+            or source_id.replace("_", " ")
+        )
+        output_record["source_file"] = normalise_pdf_filename(
+            output_record.get("source_file") or source_file
+        )
         output_record["source_sheet"] = chunk_id
         output_record["record_id"] = f"{chunk_id}_record_{index:04d}"
         output_record["source_url"] = pd.NA

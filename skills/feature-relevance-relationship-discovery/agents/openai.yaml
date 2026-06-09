@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feature Relevance"
+  short_description: "Interpret AM feature associations and coverage risk"
+  default_prompt: "Use $feature-relevance-relationship-discovery to interpret model associations conservatively."

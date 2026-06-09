@@ -296,10 +296,19 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "elongation (%)",
     ],
     "youngs_modulus_GPa": [
+        "elastic modulus",
+        "elastic modulus gpa",
+        "elastic modulus (gpa)",
+        "modulus of elasticity",
+        "modulus of elasticity gpa",
+        "modulus of elasticity (gpa)",
         "young's modulus",
         "youngs modulus",
         "youngs modulus gpa",
         "youngs modulus (gpa)",
+        "young modulus",
+        "young modulus gpa",
+        "young modulus (gpa)",
     ],
     "hardness_HV": [
         "hardness",
@@ -462,6 +471,15 @@ def infer_standard_column(original_column: object) -> str | None:
 
     if "elongation" in normalised:
         return "elongation_percent"
+
+    if "elastic modulus" in normalised or "modulus of elasticity" in normalised:
+        return "youngs_modulus_GPa"
+
+    if "young" in normalised and "modulus" in normalised:
+        return "youngs_modulus_GPa"
+
+    if "hardness" in normalised:
+        return "hardness_HV"
 
     if "relative density" in normalised or "consolidation" in normalised:
         return "relative_density_percent"

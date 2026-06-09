@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reduced Testing Matrix"
+  short_description: "Recommend representative AM testing priorities"
+  default_prompt: "Use $reduced-testing-matrix-recommendation to draft an evidence-grounded testing matrix."

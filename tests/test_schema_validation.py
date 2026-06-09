@@ -15,3 +15,4 @@ def test_config_contains_schema_variables():
     assert "output_variables" in config["schema"]
     assert "alloy" in config["schema"]["input_variables"]
     assert "uts_MPa" in config["schema"]["output_variables"]
+    assert "failure_mode" not in config["schema"]["output_variables"]

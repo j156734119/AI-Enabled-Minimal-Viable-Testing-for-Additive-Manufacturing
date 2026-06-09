@@ -89,14 +89,9 @@ def save_master_dataset() -> tuple:
     master_df, report_df = build_master_dataset()
 
     master_path = processed_dir / "master_modelling_dataset.csv"
-
-    # Compatibility path for the current training script.
-    modelling_path = processed_dir / "modelling_dataset.csv"
-
     report_path = interim_dir / "master_dataset_build_report.csv"
 
     master_df.to_csv(master_path, index=False, encoding="utf-8-sig")
-    master_df.to_csv(modelling_path, index=False, encoding="utf-8-sig")
     report_df.to_csv(report_path, index=False, encoding="utf-8-sig")
 
-    return master_path, modelling_path, report_path, master_df
+    return master_path, master_path, report_path, master_df

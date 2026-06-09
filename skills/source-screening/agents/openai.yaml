@@ -1,0 +1,4 @@
+interface:
+  display_name: "Source Screening"
+  short_description: "Screen lawful AM literature and data candidates"
+  default_prompt: "Use $source-screening to screen and rank candidate AM mechanical-testing sources."

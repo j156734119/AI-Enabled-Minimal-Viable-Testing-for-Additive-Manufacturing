@@ -46,12 +46,18 @@ data/interim/*
 !data/raw/.gitkeep
 !data/interim/.gitkeep
 !data/processed/.gitkeep
+data/processed/*.csv
+data/processed/*backup*.csv
 
 # Outputs
 outputs/models/*
 outputs/figures/*
 outputs/tables/*
 outputs/reports/*
+outputs/*_extracted.txt
+outputs/experiments/*
+
+!outputs/experiments/.gitkeep
 
 !outputs/models/.gitkeep
 !outputs/figures/.gitkeep
@@ -69,3 +75,9 @@ outputs/reports/*
 
 # Logs
 *.log
+
+# Local archives of historical data, models, and results
+archive/
+
+# Local Git hooks are installed per clone.
+.githooks/
