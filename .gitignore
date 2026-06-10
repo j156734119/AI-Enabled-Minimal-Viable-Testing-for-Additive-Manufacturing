@@ -81,3 +81,7 @@ archive/
 
 # Local Git hooks are installed per clone.
 .githooks/
+
+# Local Codex drafts and generated working documents
+/.codex/
+/.codex_*/
