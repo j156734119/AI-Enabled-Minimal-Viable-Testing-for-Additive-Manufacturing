@@ -11,6 +11,7 @@ from am_mvt.extraction.batch_extract import run_batch_extraction
 from am_mvt.extraction.openai_extractor import DEFAULT_MODEL
 from am_mvt.extraction.postprocess import save_llm_extracted_records
 from am_mvt.parsing.document_pipeline import active_chunk_paths
+from am_mvt.retrieval.evidence_index import DEFAULT_EVIDENCE_QUERY
 
 
 def load_project_env() -> None:
@@ -83,6 +84,35 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Rebuild the combined CSV from active existing JSON without API calls.",
     )
+    parser.add_argument(
+        "--use-rag-priority",
+        action="store_true",
+        help=(
+            "Prioritise pending chunks with a local-only TF-IDF evidence "
+            "retrieval query before applying --limit."
+        ),
+    )
+    parser.add_argument(
+        "--rag-top-k-per-source",
+        type=int,
+        default=None,
+        help=(
+            "When RAG priority is enabled, keep at most this many pending "
+            "chunks per source PDF before applying --limit."
+        ),
+    )
+    parser.add_argument(
+        "--rag-query",
+        type=str,
+        default=DEFAULT_EVIDENCE_QUERY,
+        help="Query used to rank local evidence chunks when --use-rag-priority is set.",
+    )
+    parser.add_argument(
+        "--react-run-id",
+        type=str,
+        default=None,
+        help="Optional run id for the ReAct-style action ledger.",
+    )
 
     return parser.parse_args()
 
@@ -128,6 +158,10 @@ def main() -> None:
         limit=limit,
         overwrite=args.overwrite,
         model=args.model,
+        use_rag_priority=args.use_rag_priority,
+        rag_top_k_per_source=args.rag_top_k_per_source,
+        rag_query=args.rag_query,
+        react_run_id=args.react_run_id,
     )
 
     output_csv = save_llm_extracted_records()

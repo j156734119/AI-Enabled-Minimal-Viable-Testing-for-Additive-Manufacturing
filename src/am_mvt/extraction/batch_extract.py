@@ -5,12 +5,17 @@ from pathlib import Path
 from typing import Any
 
 from am_mvt.config import get_path
+from am_mvt.agent.react_ledger import ReactLedger, record_human_download_boundary
 from am_mvt.extraction.openai_extractor import (
     DEFAULT_MODEL,
     extract_records_from_chunk,
     extract_records_from_pdf,
 )
 from am_mvt.parsing.document_pipeline import active_chunk_paths
+from am_mvt.retrieval.evidence_index import (
+    DEFAULT_EVIDENCE_QUERY,
+    rank_chunk_paths,
+)
 from am_mvt.utils.artifacts import sha256_file
 
 DEFAULT_SKIP_FILE = Path("config/llm_extraction_skip.txt")
@@ -96,6 +101,9 @@ def select_chunks_for_extraction(
     *,
     limit: int | None,
     overwrite: bool,
+    use_rag_priority: bool = False,
+    rag_query: str = DEFAULT_EVIDENCE_QUERY,
+    rag_top_k_per_source: int | None = None,
 ) -> tuple[list[Path], int]:
     pending = []
     skipped = 0
@@ -113,6 +121,13 @@ def select_chunks_for_extraction(
             continue
 
         pending.append(chunk_path)
+
+    if use_rag_priority:
+        pending = rank_chunk_paths(
+            pending,
+            query=rag_query,
+            top_k_per_source=rag_top_k_per_source,
+        )
 
     if limit is not None and limit > 0:
         pending = pending[:limit]
@@ -137,6 +152,10 @@ def run_batch_extraction(
     limit: int | None = 20,
     overwrite: bool = False,
     model: str = DEFAULT_MODEL,
+    use_rag_priority: bool = False,
+    rag_top_k_per_source: int | None = None,
+    rag_query: str = DEFAULT_EVIDENCE_QUERY,
+    react_run_id: str | None = None,
 ) -> list[Path]:
     chunk_dir = get_path("data", "interim", "text_chunks")
     output_dir = get_path("data", "interim", "llm_outputs")
@@ -166,17 +185,44 @@ def run_batch_extraction(
         print("No text chunks found for LLM extraction.")
         return output_paths
 
+    ledger = ReactLedger(run_id=react_run_id)
+    record_human_download_boundary(
+        ledger,
+        candidate_refs=[],
+        observed_pdf_refs=[path.stem for path in all_chunk_files],
+    )
+
     chunk_files, skipped = select_chunks_for_extraction(
         all_chunk_files,
         output_dir,
         limit=limit,
         overwrite=overwrite,
+        use_rag_priority=use_rag_priority,
+        rag_query=rag_query,
+        rag_top_k_per_source=rag_top_k_per_source,
     )
     print(f"Existing successful outputs skipped: {skipped}")
     print(f"Pending chunks selected: {len(chunk_files)}")
+    if use_rag_priority:
+        print("RAG priority ordering enabled for pending chunks.")
+    ledger.record(
+        plan_summary=(
+            "Select local PDF chunks for evidence-grounded LLM extraction. "
+            "RAG priority may reorder chunks but does not replace audit."
+        ),
+        action_type="select_extraction_chunks",
+        input_refs=[path.stem for path in all_chunk_files],
+        observation_summary=(
+            f"Skipped {skipped} existing successful outputs; selected "
+            f"{len(chunk_files)} pending chunks."
+        ),
+        decision="extract_selected_chunks" if chunk_files else "no_api_call_needed",
+        evidence_refs=[path.stem for path in chunk_files],
+    )
 
     if not chunk_files:
         print("No new or failed chunks require API extraction.")
+        print(f"ReAct-style ledger: {ledger.csv_path}")
         return output_paths
 
     for index, chunk_path in enumerate(chunk_files, start=1):
@@ -206,14 +252,38 @@ def run_batch_extraction(
         result.setdefault("_metadata", {})["chunk_sha256"] = sha256_file(
             chunk_path
         )
+        result.setdefault("_metadata", {})["react_ledger"] = str(
+            ledger.csv_path.relative_to(get_path())
+        )
+        result.setdefault("_metadata", {})["rag_priority_used"] = use_rag_priority
 
         if not write_extraction_result(output_path, result):
             print("    API failed; existing JSON output was preserved.")
+            ledger.record(
+                plan_summary="Preserve existing evidence output when API extraction fails.",
+                action_type="extract_chunk",
+                input_refs=[chunk_path.stem],
+                observation_summary="API returned an error; existing JSON was preserved.",
+                decision="preserve_existing_output",
+                evidence_refs=[str(output_path.relative_to(get_path()))],
+            )
             continue
 
         output_paths.append(output_path)
 
         record_count = len(result.get("records", []))
         print(f"    Records extracted: {record_count}")
+        ledger.record(
+            plan_summary="Extract structured AM records from a local evidence chunk.",
+            action_type="extract_chunk",
+            input_refs=[chunk_path.stem],
+            observation_summary=f"Extracted {record_count} candidate records.",
+            decision="write_candidate_json",
+            evidence_refs=[
+                str(chunk_path.relative_to(get_path())),
+                str(output_path.relative_to(get_path())),
+            ],
+        )
 
+    print(f"ReAct-style ledger: {ledger.csv_path}")
     return output_paths

@@ -276,3 +276,23 @@ def test_successful_output_archives_previous_canonical_files(tmp_path, monkeypat
 def test_crossref_http_helpers_are_not_present():
     assert not hasattr(llm_source_screening, "search_crossref_journal")
     assert not hasattr(llm_source_screening, "make_crossref_session")
+
+
+def test_step01_does_not_automate_pdf_downloads_or_credentials():
+    script_text = (PROJECT_ROOT / "scripts" / "01_search_sources.py").read_text(
+        encoding="utf-8"
+    )
+    screening_text = (
+        PROJECT_ROOT
+        / "src"
+        / "am_mvt"
+        / "ingestion"
+        / "llm_source_screening.py"
+    ).read_text(encoding="utf-8")
+    combined = (script_text + "\n" + screening_text).lower()
+
+    assert "requests." not in combined
+    assert "requests import" not in combined
+    assert "httpx." not in combined
+    assert "session()" not in combined
+    assert "download_pdf" not in combined

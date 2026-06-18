@@ -150,6 +150,7 @@ python scripts/02b_prepare_pdfs.py            # preview PDF title normalisation
 python scripts/02b_prepare_pdfs.py --apply    # move renamed PDFs into data/raw/pdfs
 python scripts/02c_export_literature_manifest.py  # export GitHub-safe article list
 python scripts/03_parse_documents.py
+python scripts/03b_build_evidence_index.py   # optional local-only RAG index over active chunks
 python scripts/04_extract_with_llm.py --limit 0  # extract all pending chunks; successful JSON is skipped
 # or rebuild the combined CSV from existing active JSON without API calls:
 python scripts/04_extract_with_llm.py --combine-only
@@ -293,6 +294,47 @@ layer, it sends the original PDF as a Responses API `input_file`, allowing a
 vision-capable model to inspect page images. Existing successful text
 extractions remain incremental; prior empty text-only results for scanned PDFs
 are eligible for one PDF-vision retry.
+
+### Human-in-the-loop ReAct and local-only RAG
+
+The literature workflow is semi-automated by design:
+
+```text
+Agent screens public candidate literature
+-> researcher manually obtains PDFs through lawful routes
+-> local PDFs are parsed and chunked
+-> local evidence chunks may be retrieved with lightweight TF-IDF RAG
+-> LLM extraction writes candidate records with source/page evidence
+-> rule-based audit and human review decide admission
+```
+
+The system does not automate publisher PDF downloads, use credentials, cookies,
+VPN sessions, or institutional access tokens. PDF acquisition is an explicit
+human-in-the-loop action. The ReAct-style ledger records auditable
+`action_type`, `observation_summary`, `decision`, and evidence references under
+`data/interim/agent_runs/<run_id>/`; it does not store hidden chain-of-thought.
+
+Build the optional local evidence index after Step 03:
+
+```text
+python scripts/03b_build_evidence_index.py
+```
+
+Query local evidence chunks for demonstrations or manual checks:
+
+```text
+python scripts/query_evidence_rag.py "Ti-6Al-4V fatigue stress amplitude data" --top-k 5
+```
+
+Use RAG priority for low-cost Step 04 trials or newly added PDFs:
+
+```text
+python scripts/04_extract_with_llm.py --use-rag-priority --rag-top-k-per-source 3 --limit 20
+```
+
+RAG priority only reorders or limits the pending local chunks selected for
+extraction. It does not replace the active manifest, source evidence, audit
+gate, or manual review.
 
 After training, batch-predict proposed experiment scenarios with:
 

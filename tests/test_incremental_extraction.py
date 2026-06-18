@@ -73,6 +73,33 @@ def test_failed_or_malformed_outputs_are_retried(tmp_path):
     assert {path.stem for path in selected} == {"failed", "malformed"}
 
 
+def test_rag_priority_only_reorders_pending_outputs(tmp_path):
+    chunks = []
+    texts = {
+        "successful": "fatigue stress amplitude high relevance",
+        "low": "general additive manufacturing text",
+        "high": "fatigue stress amplitude R ratio life data",
+    }
+    for name, text in texts.items():
+        chunk = tmp_path / f"{name}.txt"
+        chunk.write_text(text, encoding="utf-8")
+        chunks.append(chunk)
+
+    write_output(tmp_path / "successful.json")
+
+    selected, skipped = select_chunks_for_extraction(
+        chunks,
+        tmp_path,
+        limit=1,
+        overwrite=False,
+        use_rag_priority=True,
+        rag_query="fatigue stress amplitude",
+    )
+
+    assert skipped == 1
+    assert [path.stem for path in selected] == ["high"]
+
+
 def test_empty_scan_output_is_retried_for_pdf_vision(tmp_path):
     chunk = tmp_path / "scan_chunk_0000.txt"
     chunk.write_text("--- Page 1 ---\n--- Page 2 ---", encoding="utf-8")
