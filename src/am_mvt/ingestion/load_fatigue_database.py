@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +17,162 @@ from am_mvt.config import get_path
 
 FATIGUE_SOURCE_ID = "fatigue_am_alloys_figshare_2023"
 FATIGUE_SOURCE_NAME = "Fatigue Database of Additively Manufactured Alloys"
+
+
+SURFACE_TERMS = (
+    ("as-built", "as-built"),
+    ("as built", "as-built"),
+    ("electropolish", "electropolished"),
+    ("chemical polish", "chemically-polished"),
+    ("sandblast", "sandblasted"),
+    ("sand blast", "sandblasted"),
+    ("shot peen", "shot-peened"),
+    ("bead blast", "bead-blasted"),
+    ("machine", "machined"),
+    ("turn", "machined"),
+    ("grind", "ground"),
+    ("polish", "polished"),
+    ("edm", "edm-cut"),
+    ("coat", "coated"),
+    ("plate", "coated"),
+)
+
+
+def parse_surface_condition(value: object) -> object:
+    """Extract a compact surface route from the database processing sequence."""
+    if pd.isna(value):
+        return pd.NA
+    surfaces: list[str] = []
+    for segment in str(value).split(";"):
+        text = segment.strip().lower()
+        if not text.startswith("surf"):
+            continue
+        for term, label in SURFACE_TERMS:
+            if term in text and label not in surfaces:
+                surfaces.append(label)
+                break
+    return "+".join(surfaces) if surfaces else pd.NA
+
+
+def parse_heat_treatment(value: object) -> object:
+    """Extract treatment classes without inventing unreported temperatures."""
+    if pd.isna(value):
+        return pd.NA
+    stages = [segment.strip().lower() for segment in str(value).split(";")]
+    has_no_heat_treatment = any(stage.startswith("nht") for stage in stages)
+    has_hip = any(stage.startswith("hip") for stage in stages)
+    has_heat_treatment = any(
+        stage.startswith("ht") and not stage.startswith("nht") for stage in stages
+    )
+    if has_hip and has_heat_treatment:
+        return "hip+heat-treated"
+    if has_hip:
+        return "hip"
+    if has_heat_treatment:
+        return "heat-treated"
+    if has_no_heat_treatment:
+        return "no-heat-treatment"
+    return pd.NA
+
+
+def infer_material_state(
+    post_processing: object,
+    surface_condition: object,
+    heat_treatment: object,
+) -> object:
+    """Describe the broad delivered state while retaining the raw route separately."""
+    heat = "" if pd.isna(heat_treatment) else str(heat_treatment)
+    surface = "" if pd.isna(surface_condition) else str(surface_condition)
+    if heat == "hip+heat-treated":
+        return "hip-and-heat-treated"
+    if heat == "hip":
+        return "hip"
+    if heat == "heat-treated":
+        return "heat-treated"
+    if heat == "no-heat-treatment" and surface == "as-built":
+        return "as-manufactured"
+    if heat == "no-heat-treatment" and surface:
+        return "surface-processed-no-heat-treatment"
+    if heat == "no-heat-treatment":
+        return "no-heat-treatment"
+    if surface == "as-built":
+        return "as-manufactured"
+    if surface:
+        return "surface-processed-treatment-unknown"
+    if not pd.isna(post_processing):
+        return "reported-processing-route-unclassified"
+    return pd.NA
+
+
+def parse_specimen_geometry(value: object) -> object:
+    if pd.isna(value):
+        return pd.NA
+    text = str(value).strip().lower()
+    geometry_patterns = (
+        (r"c\s*\(\s*t\s*\)", "compact-tension"),
+        (r"compact\s+tension", "compact-tension"),
+        (r"circular\s+cross", "circular-cross-section"),
+        (r"rectangular\s+cross", "rectangular-cross-section"),
+        (r"cruciform", "cruciform"),
+        (r"tubular|tube", "tubular"),
+        (r"hourglass", "hourglass"),
+        (r"single.edge.notch|\bsen[bt]?\b", "single-edge-notch"),
+        (r"middle.tension|\bm\s*\(\s*t\s*\)", "middle-tension"),
+    )
+    for pattern, label in geometry_patterns:
+        if re.search(pattern, text):
+            return label
+    return pd.NA
+
+
+def parse_scalar_section_size(value: object) -> object:
+    """Use only unambiguous scalar sizes; retain compound dimensions as raw text."""
+    if pd.isna(value):
+        return pd.NA
+    text = str(value).strip()
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", text):
+        return pd.NA
+    return float(text)
+
+
+def enrich_fatigue_condition_fields(df: pd.DataFrame) -> pd.DataFrame:
+    result = df.copy()
+    post_processing = result["post_processing"]
+    inferred_surface = post_processing.map(parse_surface_condition)
+    inferred_heat = post_processing.map(parse_heat_treatment)
+    result["surface_condition"] = result["surface_condition"].combine_first(
+        inferred_surface
+    )
+    result["heat_treatment"] = result["heat_treatment"].combine_first(inferred_heat)
+    inferred_material_state = pd.Series(
+        (
+            infer_material_state(route, surface, heat)
+            for route, surface, heat in zip(
+                post_processing,
+                result["surface_condition"],
+                result["heat_treatment"],
+                strict=False,
+            )
+        ),
+        index=result.index,
+        dtype="object",
+    )
+    result["material_state"] = result["material_state"].combine_first(
+        inferred_material_state
+    )
+    inferred_geometry = result["specimen_description"].map(parse_specimen_geometry)
+    result["specimen_geometry"] = result["specimen_geometry"].combine_first(
+        inferred_geometry
+    )
+    inferred_size = result["critical_section_dimensions_mm"].map(
+        parse_scalar_section_size
+    )
+    existing_size = result["critical_section_size_mm"]
+    result["critical_section_size_mm"] = existing_size.where(
+        existing_size.notna(),
+        inferred_size,
+    )
+    return result
 
 
 def find_fatigue_excel(root_dir: str | Path | None = None) -> Path:
@@ -148,6 +305,7 @@ def standardise_sheet(
     )
 
     standard = standardise_table_to_project_schema(with_source)
+    standard = enrich_fatigue_condition_fields(standard)
 
     if "dataset_id" in standard.columns:
         standard["dataset_id"] = standard["dataset_id"].astype("string").str.strip()

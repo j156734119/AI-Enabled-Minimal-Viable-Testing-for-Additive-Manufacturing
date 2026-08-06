@@ -162,6 +162,19 @@ python scripts/07_explain_models.py --run-dir outputs/experiments/balanced_v2
 python scripts/08_generate_testing_matrix.py --run-dir outputs/experiments/balanced_v2
 ```
 
+Run the bounded multi-agent workflow without searching for literature or
+adding records:
+
+```text
+python scripts/run_multiagent_workflow.py --existing-artifacts-only --run-dir outputs/experiments/balanced_v2
+```
+
+Use `--offline` for deterministic local manager routing, `--dry-run` for
+artifact preflight only, `--resume --run-id <id>` to continue an unfinished
+run, and `--through <stage>` to stop after a named workflow stage. When no
+existing run or complete processed views can be found, the workflow writes a
+missing-artifact report and stops; it does not start literature search.
+
 Step 01 always uses the OpenAI Responses API with the `web_search` tool:
 
 ```
@@ -240,13 +253,22 @@ For a training-only run, stop after:
 python scripts/06_train_models.py --run-name balanced_v2
 ```
 
-Step 07 calculates holdout permutation importance, grouped error analysis,
+Step 06 also writes row-aligned OOF predictions with source, evaluation group,
+fold, condition fields, prediction error, and interval evidence. Step 07
+calculates holdout permutation importance, grouped error analysis,
 feature and combination coverage, limited sensitivity scans, SHAP explanations,
 one diagnostic B2 combination holdout per target, and a conservative
-relationship evidence table. Step 08 converts that evidence into a reduced but
-representative testing matrix. Sparse defect, surface, and heat-treatment
-regions are marked as requiring validation rather than recommended for test
-elimination.
+relationship evidence table. Step 08 first ranks alloy-process domains across
+all five targets and writes a client-target template. Until client thresholds
+are supplied, budget files are explicitly evidence-validation plans rather
+than target-driven reduction matrices. UTS and yield remain the primary static
+decision targets while elongation and modulus are auxiliary tensile outputs.
+It produces independent 24/36/48 static specimen plans and 30/45/60 fatigue
+specimen plans. Fatigue uses complete five-level, three-replicate S-N blocks;
+weak models produce validation plans rather than false reduction claims.
+Sparse defect, surface, and heat-treatment regions are marked as requiring
+validation rather than recommended for test elimination. Use `--legacy` to
+retain the former Step 08 output for dissertation comparison.
 
 The default command is equivalent to:
 

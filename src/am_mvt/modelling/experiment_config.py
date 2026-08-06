@@ -13,6 +13,9 @@ PROCESS_NUMERIC_FEATURES = [
     "ved_J_mm3",
     "porosity_percent",
     "relative_density_percent",
+    "surface_roughness_Ra_um",
+    "surface_roughness_Rz_um",
+    "residual_stress_MPa",
 ]
 
 PROCESS_CATEGORICAL_FEATURES = [
@@ -20,21 +23,37 @@ PROCESS_CATEGORICAL_FEATURES = [
     "alloy_family",
     "am_process",
     "machine_model",
+    "am_environment",
     "build_orientation",
     "test_direction",
     "scan_strategy",
     "heat_treatment",
+    "material_state",
     "surface_condition",
     "post_processing",
     "defect_type",
+    "residual_stress_indicator",
 ]
 
 FATIGUE_LOADING_FEATURES = [
-    "stress_amplitude_MPa",
+    "log10_stress_amplitude",
     "max_stress_MPa",
     "r_ratio",
-    "frequency_Hz",
+    "log10_frequency",
     "test_temperature_C",
+]
+
+FATIGUE_SPECIMEN_NUMERIC_FEATURES = [
+    "critical_section_size_mm",
+    "stress_concentration_factor",
+]
+
+FATIGUE_SPECIMEN_CATEGORICAL_FEATURES = [
+    "specimen_geometry",
+    "fatigue_environment",
+    "fatigue_machine",
+    "fatigue_standard",
+    "test_type",
 ]
 
 MEASURED_PROPERTY_FEATURES = [
@@ -61,8 +80,14 @@ BASE_TASKS = {
             "view_model2_sn_fatigue.csv",
         ),
         "targets": ["log10_fatigue_life_cycles"],
-        "process_numeric": PROCESS_NUMERIC_FEATURES + FATIGUE_LOADING_FEATURES,
-        "process_categorical": PROCESS_CATEGORICAL_FEATURES,
+        "process_numeric": (
+            PROCESS_NUMERIC_FEATURES
+            + FATIGUE_LOADING_FEATURES
+            + FATIGUE_SPECIMEN_NUMERIC_FEATURES
+        ),
+        "process_categorical": (
+            PROCESS_CATEGORICAL_FEATURES + FATIGUE_SPECIMEN_CATEGORICAL_FEATURES
+        ),
         "minimum_rows": 30,
         "target_bounds": {"log10_fatigue_life_cycles": (0.0, 12.0)},
     },
@@ -221,8 +246,22 @@ def selected_modes(mode: str) -> list[str]:
     raise ValueError(f"Unknown prediction mode selection: {mode}")
 
 
-def iter_task_mode_targets(mode: str = "all"):
+def iter_task_mode_targets(
+    mode: str = "all",
+    targets: list[str] | set[str] | tuple[str, ...] | None = None,
+):
+    selected_targets = set(targets) if targets is not None else None
+    configured_targets = {
+        target for config in BASE_TASKS.values() for target in config["targets"]
+    }
+    unknown_targets = (selected_targets or set()) - configured_targets
+    if unknown_targets:
+        raise ValueError(
+            "Unknown modelling targets: " + ", ".join(sorted(unknown_targets))
+        )
     for model_key, config in BASE_TASKS.items():
         for target in config["targets"]:
+            if selected_targets is not None and target not in selected_targets:
+                continue
             for selected_mode in selected_modes(mode):
                 yield model_key, target, selected_mode

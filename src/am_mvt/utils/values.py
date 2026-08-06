@@ -23,7 +23,18 @@ def parse_boolean(value: Any) -> bool | None:
         return value
 
     text = str(value).strip().lower()
-    if text in {"true", "1", "yes", "y", "runout", "run-out", "survived"}:
+    if text in {
+        "true",
+        "1",
+        "yes",
+        "y",
+        "runout",
+        "run-out",
+        "run out",
+        "run-out samples",
+        "run out samples",
+        "survived",
+    }:
         return True
     if text in {"false", "0", "no", "n", "failure", "failed"}:
         return False

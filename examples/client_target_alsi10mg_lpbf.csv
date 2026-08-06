@@ -1,0 +1,6 @@
+case_id,alloy,am_process,target,lower_bound,upper_bound,unit,reference_stress_amplitude_MPa,r_ratio,test_temperature_C,frequency_Hz,execution_surface_condition,execution_heat_treatment
+alsi10mg_bracket_demo,AlSi10Mg,L-PBF,uts_MPa,340,,MPa,,,,,machined,stress_relieved
+alsi10mg_bracket_demo,AlSi10Mg,L-PBF,yield_strength_MPa,230,,MPa,,,,,machined,stress_relieved
+alsi10mg_bracket_demo,AlSi10Mg,L-PBF,elongation_percent,8,,percent,,,,,machined,stress_relieved
+alsi10mg_bracket_demo,AlSi10Mg,L-PBF,youngs_modulus_GPa,65,85,GPa,,,,,machined,stress_relieved
+alsi10mg_bracket_demo,AlSi10Mg,L-PBF,fatigue_life_cycles,10000000,20000000,cycles,110,-1,25,50,machined,stress_relieved

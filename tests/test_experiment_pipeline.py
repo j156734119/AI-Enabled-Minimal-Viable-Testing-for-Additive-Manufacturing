@@ -48,9 +48,7 @@ def test_process_only_does_not_use_measured_properties():
         ("model4_elastic_modulus", "youngs_modulus_GPa"),
     ]:
         config = get_experiment_config(model_key, target, "process_only")
-        assert not set(config["numeric_features"]) & set(
-            MEASURED_PROPERTY_FEATURES
-        )
+        assert not set(config["numeric_features"]) & set(MEASURED_PROPERTY_FEATURES)
 
 
 def test_master_dataset_builds_all_four_modelling_views(tmp_path):
@@ -166,6 +164,11 @@ def test_balanced_defaults_to_process_only_and_five_folds():
     assert get_training_profile("standard")["default_cv_folds"] == 5
     assert len(list(iter_task_mode_targets("process_only"))) == 5
     assert len(list(iter_task_mode_targets("all"))) == 10
+
+
+def test_target_filter_rejects_unknown_target():
+    with pytest.raises(ValueError, match="Unknown modelling targets"):
+        list(iter_task_mode_targets("process_only", targets=["not_a_target"]))
 
 
 def test_run_configuration_records_fast_profile_and_mode(tmp_path):
@@ -315,9 +318,7 @@ def test_runout_becomes_right_censored():
 
 
 def test_invalid_or_unit_contaminated_stress_is_excluded():
-    frame = pd.DataFrame(
-        {"stress_amplitude_MPa": [np.nan, 0.003, 100.0, 3500.0]}
-    )
+    frame = pd.DataFrame({"stress_amplitude_MPa": [np.nan, 0.003, 100.0, 3500.0]})
     filtered = filter_valid_fatigue_loading(frame)
     assert filtered["stress_amplitude_MPa"].tolist() == [100.0]
 
@@ -409,9 +410,7 @@ def test_batch_prediction_reports_missing_and_out_of_range_inputs(tmp_path):
         "categorical_features": [],
         "conformal_q90": 50.0,
         "feature_domain": {
-            "numeric_ranges": {
-                "laser_power_W": {"min": 100.0, "max": 200.0}
-            },
+            "numeric_ranges": {"laser_power_W": {"min": 100.0, "max": 200.0}},
             "categorical_values": {},
         },
     }

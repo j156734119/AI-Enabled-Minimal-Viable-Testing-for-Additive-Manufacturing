@@ -203,9 +203,7 @@ def append_llm_records_to_master(
     ]
     llm_df = llm_df.drop(
         columns=[
-            column
-            for column in decision_metadata_columns
-            if column in llm_df.columns
+            column for column in decision_metadata_columns if column in llm_df.columns
         ]
     )
     llm_df["record_fingerprint"] = llm_df.apply(record_fingerprint, axis=1)
@@ -235,14 +233,13 @@ def append_llm_records_to_master(
 
     if make_backup and output_path.exists():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = output_path.with_name(f"{output_path.stem}_backup_{timestamp}.csv")
+        backup_path = output_path.with_name(
+            f"{output_path.stem}_backup_{timestamp}.csv"
+        )
         output_path.replace(backup_path)
         print(f"Backup created: {backup_path}")
 
-    concat_frames = [
-        frame.dropna(axis=1, how="all")
-        for frame in [master_df, llm_df]
-    ]
+    concat_frames = [frame.dropna(axis=1, how="all") for frame in [master_df, llm_df]]
     combined_df = pd.concat(
         concat_frames,
         ignore_index=True,
@@ -302,6 +299,7 @@ def append_llm_records_to_master(
     )
 
     summary_path = get_path("data", "processed", "llm_merge_summary.csv")
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
 
     return output_path, summary

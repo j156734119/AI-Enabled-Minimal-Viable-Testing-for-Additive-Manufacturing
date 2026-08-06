@@ -36,6 +36,15 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override grouped CV folds (fast=3, standard=5).",
     )
+    parser.add_argument(
+        "--targets",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional target names. Defaults to all configured targets. "
+            "Example: uts_MPa yield_strength_MPa."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -45,12 +54,14 @@ def main() -> None:
     print(f"Run name: {args.run_name}")
     print(f"Profile: {args.profile}")
     print(f"Mode: {args.mode}")
+    print(f"Targets: {args.targets or 'all'}")
     print("Existing project metrics and models will not be overwritten.")
     run_dir = run_experiment_suite(
         run_name=args.run_name,
         profile=args.profile,
         n_splits=args.cv_folds,
         mode=args.mode,
+        targets=args.targets,
     )
     print("\nStep 06 complete.")
     print(f"Experiment outputs: {run_dir}")

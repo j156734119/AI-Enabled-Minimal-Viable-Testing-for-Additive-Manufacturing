@@ -19,17 +19,26 @@ dissertation into a broad prediction competition.
 
 # Procedure
 
-1. Use DOI-first, dataset-ID fallback groups and a 20% final holdout.
+1. Use dataset-ID-first groups for fatigue S-N curves and DOI-first groups for
+   static targets, with source and record identifiers as fallbacks.
 2. Default to the CPU-oriented `fast` profile: `process_only`, three-fold
    GroupKFold, and one lightweight CatBoost candidate.
 3. Use `standard --mode all` only when the full five-fold, dual-mode,
    four-CatBoost comparison is required.
 4. Compare Dummy mean/median, alloy-family median, Ridge, Random Forest,
    XGBoost, and conservative CatBoost candidates using mean CV MAE.
-5. For fatigue, also run hierarchical Basquin, Basquin plus CatBoost residual,
-   and XGBoost-AFT with right-censored runouts.
-6. Generate 90% OOF conformal intervals for ordinary and Basquin routes.
-7. Evaluate the final holdout once and retain physical monotonicity checks.
+5. Route fatigue by protocol: conventional force-controlled records at no more
+   than 200 Hz are the ASTM E466-style route; records at 1000 Hz or above are
+   ultrasonic VHCF; missing or intermediate frequencies are isolated.
+6. Keep ordinary regression and hierarchical Basquin as failure-only
+   diagnostics. Use monotonic XGBoost-AFT with explicit right-censored runouts
+   as the formal high-cycle decision route.
+7. Compare AFT normal, logistic, and extreme distributions at configured
+   scales using grouped OOF AFT loss, with C-index as a secondary metric.
+8. Do not train an ASTM E606-style model without total, plastic, and elastic
+   strain-amplitude data; report the route as not assessable.
+9. Generate 90% OOF conformal intervals for ordinary and Basquin routes.
+10. Evaluate the final holdout once and retain physical monotonicity checks.
 
 # Decision Gates
 
@@ -47,6 +56,8 @@ dissertation into a broad prediction competition.
 
 - Report CV mean/std and final test MAE, RMSE, R2, and split method.
 - Report AFT negative log-likelihood and Harrell C-index.
+- Verify unknown runout states never enter AFT as observed failures.
+- Verify 20 kHz data never enter the conventional E466-style model.
 - Verify negative Basquin slopes and monotonic non-increasing stress scans.
 - Describe R2 as variance explained, not classification accuracy.
 

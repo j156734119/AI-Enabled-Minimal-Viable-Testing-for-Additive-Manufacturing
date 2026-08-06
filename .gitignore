@@ -49,6 +49,9 @@ data/interim/*
 data/processed/*.csv
 data/processed/*backup*.csv
 
+# Keep the compressed main modelling dataset as a reproducible project artifact.
+!data/processed/master_modelling_dataset.csv.gz
+
 # Outputs
 outputs/models/*
 outputs/figures/*
@@ -64,8 +67,13 @@ outputs/experiments/*
 !outputs/tables/.gitkeep
 !outputs/reports/.gitkeep
 
-# Large or copyrighted files
+# Large, copyrighted, or generated document/media files
+*.doc
+*.docx
 *.pdf
+*.png
+*.jpg
+*.jpeg
 *.zip
 *.xlsx
 *.xls
@@ -85,3 +93,12 @@ archive/
 # Local Codex drafts and generated working documents
 /.codex/
 /.codex_*/
+/tmp/
+
+# Meeting and progress-document production artifacts
+/outputs/qa_meeting_*/
+/outputs/qa_progress_update_*/
+/outputs/meeting_one_style.json
+/scripts/build_meeting_*.py
+/scripts/build_project_progress_update.py
+/scripts/build_three_line_progress_update.py

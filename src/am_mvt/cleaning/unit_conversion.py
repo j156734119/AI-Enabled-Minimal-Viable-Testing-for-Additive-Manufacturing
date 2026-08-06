@@ -14,6 +14,11 @@ NUMERIC_COLUMNS = [
     "build_plate_temperature_C",
     "porosity_percent",
     "relative_density_percent",
+    "surface_roughness_Ra_um",
+    "surface_roughness_Rz_um",
+    "residual_stress_MPa",
+    "critical_section_size_mm",
+    "stress_concentration_factor",
     "test_temperature_C",
     "yield_strength_MPa",
     "uts_MPa",
@@ -65,7 +70,18 @@ def normalise_boolean_runout(df: pd.DataFrame) -> pd.DataFrame:
 
         text = str(value).strip().lower()
 
-        if text in {"true", "yes", "y", "1", "runout", "run out", "survived"}:
+        if text in {
+            "true",
+            "yes",
+            "y",
+            "1",
+            "runout",
+            "run-out",
+            "run out",
+            "run-out samples",
+            "run out samples",
+            "survived",
+        }:
             return True
 
         if text in {"false", "no", "n", "0", "failure", "failed"}:

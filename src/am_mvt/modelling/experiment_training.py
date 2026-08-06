@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -48,6 +49,18 @@ from am_mvt.modelling.experiment_metrics import (
     conformal_radius,
     harrell_c_index,
     regression_metrics,
+)
+from am_mvt.modelling.fatigue_protocol import (
+    FATIGUE_THRESHOLDS,
+    aft_life_quantile,
+    aft_survival_probability,
+    calibrate_threshold_probability,
+    e606_assessment,
+    fatigue_protocol_audit,
+    fit_isotonic_calibration,
+    protocolise_fatigue_data,
+    regime_summary,
+    threshold_labels,
 )
 from am_mvt.utils.artifacts import sha256_file
 
@@ -175,9 +188,7 @@ def get_model_candidates(
                     profile_config["catboost_early_stopping_rounds"]
                 ),
             }
-            for name, params in dict(
-                profile_config["catboost_candidates"]
-            ).items()
+            for name, params in dict(profile_config["catboost_candidates"]).items()
         }
     )
     include_mlp = bool(profile_config.get("include_mlp", False))
@@ -439,9 +450,8 @@ def fit_candidate(
         categorical_features,
     )
     fit_params = {}
-    if (
-        not isinstance(candidate["model"], DummyRegressor)
-        and candidate.get("accepts_sample_weight", True)
+    if not isinstance(candidate["model"], DummyRegressor) and candidate.get(
+        "accepts_sample_weight", True
     ):
         sample_weight = get_sample_weight(train_df)
         if sample_weight is not None:
@@ -508,9 +518,7 @@ def split_audit_fields(
     return {
         "n_development": len(development_df),
         "n_final_test": len(test_df),
-        "development_groups": int(
-            development_df["evaluation_group_id"].nunique()
-        ),
+        "development_groups": int(development_df["evaluation_group_id"].nunique()),
         "final_test_groups": int(test_df["evaluation_group_id"].nunique()),
     }
 
@@ -543,6 +551,116 @@ def select_candidate_by_oof(candidate_summary: pd.DataFrame) -> str:
     )
 
 
+def route_oof_frame(
+    development_df: pd.DataFrame,
+    *,
+    target: str,
+    model_key: str,
+    mode: str,
+    route: str,
+    candidate: str,
+    fold: np.ndarray,
+    predictions: np.ndarray,
+    conformal_q: float | None,
+    censored: pd.Series | np.ndarray | None = None,
+) -> pd.DataFrame:
+    evidence_columns = [
+        "source_id",
+        "source_name",
+        "source_file",
+        "dataset_id",
+        "record_id",
+        "doi",
+        "source_title",
+        "alloy",
+        "alloy_family",
+        "am_process",
+        "machine_model",
+        "am_environment",
+        "laser_power_W",
+        "scan_speed_mm_s",
+        "hatch_spacing_um",
+        "layer_thickness_um",
+        "ved_J_mm3",
+        "build_orientation",
+        "test_direction",
+        "scan_strategy",
+        "heat_treatment",
+        "material_state",
+        "surface_condition",
+        "surface_roughness_Ra_um",
+        "surface_roughness_Rz_um",
+        "post_processing",
+        "porosity_percent",
+        "relative_density_percent",
+        "defect_type",
+        "residual_stress_indicator",
+        "residual_stress_MPa",
+        "specimen_description",
+        "specimen_geometry",
+        "critical_section_dimensions_mm",
+        "critical_section_size_mm",
+        "stress_concentration_factor",
+        "fatigue_environment",
+        "fatigue_machine",
+        "fatigue_standard",
+        "load_control",
+        "test_type",
+        "stress_amplitude_MPa",
+        "max_stress_MPa",
+        "r_ratio",
+        "frequency_Hz",
+        "test_temperature_C",
+        "runout",
+        "fatigue_protocol",
+        "control_mode",
+        "frequency_regime",
+        "event_observed",
+        "censor_lower_cycles",
+        "runout_limit_cycles",
+        "stress_definition",
+        "r_ratio_bin",
+        "evaluation_group_id",
+        "modelling_group_id",
+    ]
+    available = [column for column in evidence_columns if column in development_df]
+    result = development_df[available].copy()
+    result.insert(0, "model_key", model_key)
+    result.insert(1, "target", target)
+    result.insert(2, "mode", mode)
+    result.insert(3, "route", route)
+    result.insert(4, "candidate", candidate)
+    result.insert(5, "fold", fold)
+    result["y_true"] = pd.to_numeric(development_df[target], errors="coerce").to_numpy()
+    result["y_pred"] = np.asarray(predictions, dtype=float)
+    is_censored = (
+        pd.Series(censored, index=development_df.index).fillna(False).astype(bool)
+        if censored is not None
+        else pd.Series(False, index=development_df.index)
+    )
+    result["is_censored"] = is_censored.to_numpy()
+    result["abs_error"] = np.where(
+        result["is_censored"],
+        np.nan,
+        np.abs(result["y_true"] - result["y_pred"]),
+    )
+    if conformal_q is None or not np.isfinite(conformal_q):
+        result["interval_lower_90"] = np.nan
+        result["interval_upper_90"] = np.nan
+        result["interval_hit_90"] = pd.NA
+        result["conformal_q90"] = np.nan
+    else:
+        result["interval_lower_90"] = result["y_pred"] - conformal_q
+        result["interval_upper_90"] = result["y_pred"] + conformal_q
+        result["interval_hit_90"] = result["y_true"].between(
+            result["interval_lower_90"],
+            result["interval_upper_90"],
+            inclusive="both",
+        )
+        result["conformal_q90"] = conformal_q
+    return result
+
+
 def train_conventional_experiment(
     model_key: str,
     target: str,
@@ -550,13 +668,18 @@ def train_conventional_experiment(
     run_dir: Path,
     n_splits: int,
     profile: str,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], pd.DataFrame]:
     config = get_experiment_config(model_key, target, mode)
     bounds = config["target_bounds"].get(target)
     frame = load_experiment_frame(config["dataset_path"], target, bounds)
     final_holdout_groups = None
     if model_key == "model2_sn_fatigue":
         frame = filter_valid_fatigue_loading(frame)
+        frame = protocolise_fatigue_data(frame)
+        frame = frame.loc[
+            frame["fatigue_protocol"].eq("e466_conventional")
+            & ~frame["stress_consistency_status"].eq("review_required")
+        ].reset_index(drop=True)
         final_holdout_groups = select_final_holdout_groups(frame)
         runout = normalise_runout(frame["runout"])
         frame = frame.loc[runout.eq(False)].reset_index(drop=True)
@@ -586,11 +709,13 @@ def train_conventional_experiment(
         f"categorical={len(categorical_features)}"
     )
     folds = make_group_folds(development_df, n_splits=n_splits)
+    oof_fold = np.full(len(development_df), -1, dtype=int)
+    for fold_number, (_, validation_index) in enumerate(folds, start=1):
+        oof_fold[validation_index] = fold_number
     candidates = get_model_candidates(profile, verify_mlp_runtime=True)
     cv_rows: list[dict[str, Any]] = []
     oof_predictions: dict[str, np.ndarray] = {
-        name: np.full(len(development_df), np.nan)
-        for name in candidates
+        name: np.full(len(development_df), np.nan) for name in candidates
     }
 
     for candidate_name, candidate in candidates.items():
@@ -768,7 +893,65 @@ def train_conventional_experiment(
             test_df,
         ),
     }
-    return cv_rows + summary_rows, registry_entry
+    selected_oof = np.asarray(oof_predictions[selected_name], dtype=float)
+    evidence_columns = [
+        "source_id",
+        "source_name",
+        "source_file",
+        "dataset_id",
+        "record_id",
+        "doi",
+        "source_title",
+        "alloy",
+        "alloy_family",
+        "am_process",
+        "machine_model",
+        "laser_power_W",
+        "scan_speed_mm_s",
+        "hatch_spacing_um",
+        "layer_thickness_um",
+        "ved_J_mm3",
+        "build_orientation",
+        "test_direction",
+        "scan_strategy",
+        "heat_treatment",
+        "surface_condition",
+        "post_processing",
+        "porosity_percent",
+        "relative_density_percent",
+        "defect_type",
+        "stress_amplitude_MPa",
+        "max_stress_MPa",
+        "r_ratio",
+        "frequency_Hz",
+        "test_temperature_C",
+        "runout",
+        "evaluation_group_id",
+    ]
+    available_columns = [
+        column for column in evidence_columns if column in development_df.columns
+    ]
+    oof_frame = development_df[available_columns].copy()
+    oof_frame.insert(0, "model_key", model_key)
+    oof_frame.insert(1, "target", target)
+    oof_frame.insert(2, "mode", mode)
+    oof_frame.insert(3, "route", "ordinary_regression")
+    oof_frame.insert(4, "candidate", selected_name)
+    oof_frame.insert(5, "fold", oof_fold)
+    oof_frame["y_true"] = pd.to_numeric(
+        development_df[target], errors="coerce"
+    ).to_numpy()
+    oof_frame["y_pred"] = selected_oof
+    oof_frame["abs_error"] = np.abs(oof_frame["y_true"] - selected_oof)
+    oof_frame["interval_lower_90"] = selected_oof - conformal_q
+    oof_frame["interval_upper_90"] = selected_oof + conformal_q
+    oof_frame["interval_hit_90"] = oof_frame["y_true"].between(
+        oof_frame["interval_lower_90"],
+        oof_frame["interval_upper_90"],
+        inclusive="both",
+    )
+    oof_frame["conformal_q90"] = conformal_q
+    return cv_rows + summary_rows, registry_entry, oof_frame
 
 
 def fit_residual_catboost(
@@ -781,9 +964,7 @@ def fit_residual_catboost(
     profile: str,
 ):
     profile_config = get_training_profile(profile)
-    residual_candidate_name = str(
-        profile_config["basquin_residual_catboost"]
-    )
+    residual_candidate_name = str(profile_config["basquin_residual_catboost"])
     residual_params = dict(profile_config["catboost_candidates"])[
         residual_candidate_name
     ]
@@ -812,6 +993,7 @@ def train_basquin_experiment(
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
+    pd.DataFrame,
 ]:
     model_key = "model2_sn_fatigue"
     target = "log10_fatigue_life_cycles"
@@ -822,6 +1004,11 @@ def train_basquin_experiment(
         config["target_bounds"][target],
     )
     frame = filter_valid_fatigue_loading(frame)
+    frame = protocolise_fatigue_data(frame)
+    frame = frame.loc[
+        frame["fatigue_protocol"].eq("e466_conventional")
+        & ~frame["stress_consistency_status"].eq("review_required")
+    ].reset_index(drop=True)
     final_holdout_groups = select_final_holdout_groups(frame)
     runout = normalise_runout(frame["runout"])
     frame = frame.loc[runout.eq(False)].reset_index(drop=True)
@@ -842,9 +1029,11 @@ def train_basquin_experiment(
     folds = make_group_folds(development_df, n_splits=n_splits)
     routes = ["basquin_only", "basquin_catboost_residual"]
     oof = {route: np.full(len(development_df), np.nan) for route in routes}
+    oof_fold = np.full(len(development_df), -1, dtype=int)
     rows: list[dict[str, Any]] = []
 
     for fold_number, (train_index, validation_index) in enumerate(folds, start=1):
+        oof_fold[validation_index] = fold_number
         train_df = development_df.iloc[train_index].copy()
         validation_df = development_df.iloc[validation_index].copy()
         assert_disjoint_groups(train_df, validation_df)
@@ -853,8 +1042,7 @@ def train_basquin_experiment(
         validation_basquin = basquin.predict(validation_df)
         oof["basquin_only"][validation_index] = validation_basquin
         train_residual = pd.Series(
-            pd.to_numeric(train_df[target], errors="coerce").to_numpy()
-            - train_basquin,
+            pd.to_numeric(train_df[target], errors="coerce").to_numpy() - train_basquin,
             index=train_df.index,
         )
         validation_residual = pd.Series(
@@ -945,9 +1133,7 @@ def train_basquin_experiment(
                 index=development_df.index,
             )
             profile_config = get_training_profile(profile)
-            residual_candidate_name = str(
-                profile_config["basquin_residual_catboost"]
-            )
+            residual_candidate_name = str(profile_config["basquin_residual_catboost"])
             residual_params = dict(profile_config["catboost_candidates"])[
                 residual_candidate_name
             ]
@@ -1074,7 +1260,29 @@ def train_basquin_experiment(
             }
         )
 
-    return rows, registry_entries, physical_checks
+    oof_frames = []
+    for route in routes:
+        route_frame = route_oof_frame(
+            development_df,
+            target=target,
+            model_key=model_key,
+            mode=mode,
+            route=route,
+            candidate=route,
+            fold=oof_fold,
+            predictions=oof[route],
+            conformal_q=conformal_radius(development_df[target], oof[route]),
+        )
+        oof_frames.append(route_frame)
+    return (
+        rows,
+        registry_entries,
+        physical_checks,
+        pd.concat(
+            oof_frames,
+            ignore_index=True,
+        ),
+    )
 
 
 def prepare_aft_features(
@@ -1100,11 +1308,25 @@ def prepare_aft_features(
     return preprocessor, train_x, validation_x
 
 
+def aft_monotone_constraints(
+    transformed_feature_count: int,
+    numeric_features: list[str],
+) -> str:
+    constraints = [
+        -1 if feature == "log10_stress_amplitude" else 0 for feature in numeric_features
+    ]
+    constraints.extend([0] * (transformed_feature_count - len(constraints)))
+    return "(" + ",".join(str(value) for value in constraints) + ")"
+
+
 def make_aft_bounds(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     lower = pd.to_numeric(frame["fatigue_life_cycles"], errors="coerce").to_numpy(
         dtype=float
     )
-    runout = normalise_runout(frame["runout"]).fillna(False).to_numpy(dtype=bool)
+    runout_values = normalise_runout(frame["runout"])
+    if runout_values.isna().any():
+        raise ValueError("AFT bounds require an explicit failure or runout status.")
+    runout = runout_values.to_numpy(dtype=bool)
     upper = lower.copy()
     upper[runout] = np.inf
     event = ~runout
@@ -1117,6 +1339,10 @@ def train_aft_booster(
     train_df: pd.DataFrame,
     validation_df: pd.DataFrame,
     profile: str,
+    *,
+    distribution: str = "normal",
+    scale: float = 1.0,
+    monotone_constraints: str | None = None,
 ):
     profile_config = get_training_profile(profile)
     train_lower, train_upper, _ = make_aft_bounds(train_df)
@@ -1130,8 +1356,8 @@ def train_aft_booster(
     params = {
         "objective": "survival:aft",
         "eval_metric": "aft-nloglik",
-        "aft_loss_distribution": "normal",
-        "aft_loss_distribution_scale": 1.2,
+        "aft_loss_distribution": distribution,
+        "aft_loss_distribution_scale": float(scale),
         "tree_method": "hist",
         "learning_rate": 0.04,
         "max_depth": 4,
@@ -1142,6 +1368,8 @@ def train_aft_booster(
         "seed": 42,
         "nthread": -1,
     }
+    if monotone_constraints:
+        params["monotone_constraints"] = monotone_constraints
     evaluations: dict[str, dict[str, list[float]]] = {}
     booster = xgb.train(
         params,
@@ -1149,15 +1377,21 @@ def train_aft_booster(
         num_boost_round=int(profile_config["aft_boost_rounds"]),
         evals=[(dvalidation, "validation")],
         evals_result=evaluations,
-        early_stopping_rounds=int(
-            profile_config["aft_early_stopping_rounds"]
-        ),
+        early_stopping_rounds=int(profile_config["aft_early_stopping_rounds"]),
         verbose_eval=False,
     )
     return booster, dvalidation, evaluations
 
 
-def train_aft_fixed_rounds(train_x, train_df: pd.DataFrame, rounds: int):
+def train_aft_fixed_rounds(
+    train_x,
+    train_df: pd.DataFrame,
+    rounds: int,
+    *,
+    distribution: str = "normal",
+    scale: float = 1.0,
+    monotone_constraints: str | None = None,
+):
     train_lower, train_upper, _ = make_aft_bounds(train_df)
     dtrain = xgb.DMatrix(train_x)
     dtrain.set_float_info("label_lower_bound", train_lower)
@@ -1165,8 +1399,8 @@ def train_aft_fixed_rounds(train_x, train_df: pd.DataFrame, rounds: int):
     params = {
         "objective": "survival:aft",
         "eval_metric": "aft-nloglik",
-        "aft_loss_distribution": "normal",
-        "aft_loss_distribution_scale": 1.2,
+        "aft_loss_distribution": distribution,
+        "aft_loss_distribution_scale": float(scale),
         "tree_method": "hist",
         "learning_rate": 0.04,
         "max_depth": 4,
@@ -1177,6 +1411,8 @@ def train_aft_fixed_rounds(train_x, train_df: pd.DataFrame, rounds: int):
         "seed": 42,
         "nthread": -1,
     }
+    if monotone_constraints:
+        params["monotone_constraints"] = monotone_constraints
     return xgb.train(
         params,
         dtrain,
@@ -1208,7 +1444,7 @@ def train_aft_experiment(
     run_dir: Path,
     n_splits: int,
     profile: str,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], pd.DataFrame]:
     model_key = "model2_sn_fatigue"
     target = "log10_fatigue_life_cycles"
     config = get_experiment_config(model_key, target, mode)
@@ -1221,6 +1457,28 @@ def train_aft_experiment(
         pd.to_numeric(frame["fatigue_life_cycles"], errors="coerce").gt(0)
     ].reset_index(drop=True)
     frame = filter_valid_fatigue_loading(frame)
+    frame = protocolise_fatigue_data(frame)
+    audit = fatigue_protocol_audit(frame)
+    audit.to_csv(
+        run_dir / "tables" / "fatigue_protocol_audit.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    regime_summary(frame).to_csv(
+        run_dir / "tables" / "fatigue_regime_summary.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    pd.DataFrame([{"assessment": e606_assessment(frame)}]).to_csv(
+        run_dir / "tables" / "fatigue_e606_assessment.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    frame = frame.loc[
+        frame["fatigue_protocol"].eq("e466_conventional")
+        & frame["event_observed"].notna()
+        & ~frame["stress_consistency_status"].eq("review_required")
+    ].reset_index(drop=True)
     final_holdout_groups = select_final_holdout_groups(frame)
     numeric_features, categorical_features = select_usable_features(
         frame,
@@ -1234,41 +1492,327 @@ def train_aft_experiment(
     assert_disjoint_groups(development_df, test_df)
     folds = make_group_folds(development_df, n_splits=n_splits)
     rows: list[dict[str, Any]] = []
+    oof_fold = np.full(len(development_df), -1, dtype=int)
+    candidates = [
+        (distribution, scale)
+        for distribution in ("normal", "logistic", "extreme")
+        for scale in (0.5, 1.0, 1.5)
+    ]
+    candidate_predictions: dict[str, np.ndarray] = {
+        f"{distribution}_scale_{scale:g}": np.full(len(development_df), np.nan)
+        for distribution, scale in candidates
+    }
+    return _continue_aft_training(
+        candidates=candidates,
+        candidate_predictions=candidate_predictions,
+        rows=rows,
+        folds=folds,
+        oof_fold=oof_fold,
+        development_df=development_df,
+        test_df=test_df,
+        numeric_features=numeric_features,
+        categorical_features=categorical_features,
+        model_key=model_key,
+        target=target,
+        mode=mode,
+        run_dir=run_dir,
+        profile=profile,
+    )
 
-    for fold_number, (train_index, validation_index) in enumerate(folds, start=1):
-        train_df = development_df.iloc[train_index].copy()
-        validation_df = development_df.iloc[validation_index].copy()
-        assert_disjoint_groups(train_df, validation_df)
-        _, train_x, validation_x = prepare_aft_features(
-            train_df,
-            validation_df,
+
+def _fatigue_domain_key(row: pd.Series, level: str) -> str:
+    if level == "exact":
+        values = [
+            row.get("alloy"),
+            row.get("am_process"),
+            row.get("fatigue_protocol"),
+            row.get("r_ratio_bin"),
+        ]
+    elif level == "family":
+        values = [
+            row.get("alloy_family"),
+            row.get("fatigue_protocol"),
+            row.get("r_ratio_bin"),
+        ]
+    elif level == "protocol":
+        values = [row.get("fatigue_protocol")]
+    else:
+        raise ValueError(f"Unknown fatigue domain level: {level}")
+    return "|".join("missing" if pd.isna(value) else str(value) for value in values)
+
+
+def fatigue_domain_support(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    definitions = {
+        "exact": ["alloy", "am_process", "fatigue_protocol", "r_ratio_bin"],
+        "family": ["alloy_family", "fatigue_protocol", "r_ratio_bin"],
+    }
+    for level, columns in definitions.items():
+        for values, group in frame.groupby(columns, dropna=False):
+            values = values if isinstance(values, tuple) else (values,)
+            descriptor = pd.Series(dict(zip(columns, values)))
+            records = len(group)
+            groups = int(group["evaluation_group_id"].nunique())
+            stress_levels = int(
+                pd.to_numeric(group["stress_amplitude_MPa"], errors="coerce")
+                .round(6)
+                .nunique()
+            )
+            result.append(
+                {
+                    "level": level,
+                    "key": _fatigue_domain_key(descriptor, level),
+                    "records": records,
+                    "dataset_groups": groups,
+                    "stress_levels": stress_levels,
+                    "eligible": bool(
+                        records >= 150 and groups >= 20 and stress_levels >= 4
+                    ),
+                }
+            )
+    return result
+
+
+def train_aft_domain_models(
+    development_df: pd.DataFrame,
+    numeric_features: list[str],
+    categorical_features: list[str],
+    *,
+    distribution: str,
+    scale: float,
+    rounds: int,
+    run_dir: Path,
+    mode: str,
+) -> list[dict[str, Any]]:
+    support = fatigue_domain_support(development_df)
+    manifests: list[dict[str, Any]] = []
+    for item in support:
+        if not item["eligible"]:
+            continue
+        level = str(item["level"])
+        key = str(item["key"])
+        mask = development_df.apply(
+            lambda row: _fatigue_domain_key(row, level) == key,
+            axis=1,
+        )
+        domain = development_df.loc[mask].reset_index(drop=True)
+        domain_numeric, domain_categorical = select_usable_features(
+            domain,
             numeric_features,
             categorical_features,
         )
-        booster, dvalidation, evaluations = train_aft_booster(
-            train_x,
-            validation_x,
-            train_df,
-            validation_df,
-            profile,
+        clean = clean_features(domain, domain_numeric, domain_categorical)
+        preprocessor = build_preprocessor(
+            domain_numeric,
+            domain_categorical,
+            sparse=True,
         )
-        predictions = booster.predict(dvalidation)
-        nloglik = evaluations["validation"]["aft-nloglik"][
-            booster.best_iteration
-        ]
-        rows.append(
+        transformed = preprocessor.fit_transform(
+            clean[domain_numeric + domain_categorical]
+        )
+        constraints = aft_monotone_constraints(
+            transformed.shape[1],
+            domain_numeric,
+        )
+        booster = train_aft_fixed_rounds(
+            transformed,
+            domain,
+            rounds,
+            distribution=distribution,
+            scale=scale,
+            monotone_constraints=constraints,
+        )
+        digest = hashlib.sha256(f"{level}::{key}".encode("utf-8")).hexdigest()[:12]
+        model_path = (
+            run_dir / "models" / f"fatigue__{mode}__xgboost_aft__{level}_{digest}.json"
+        )
+        metadata_path = (
+            run_dir
+            / "models"
+            / f"fatigue__{mode}__xgboost_aft__{level}_{digest}.joblib"
+        )
+        booster.save_model(model_path)
+        joblib.dump(
             {
-                "model_key": model_key,
-                "target": target,
-                "mode": mode,
-                "route": "xgboost_aft",
-                "candidate": "xgboost_aft",
-                "fold": fold_number,
-                "n_train": len(train_df),
-                "n_validation": len(validation_df),
-                **aft_metrics(validation_df, predictions, nloglik),
+                "preprocessor": preprocessor,
+                "numeric_features": domain_numeric,
+                "categorical_features": domain_categorical,
+                "feature_domain": feature_domain(
+                    domain,
+                    domain_numeric,
+                    domain_categorical,
+                ),
+            },
+            metadata_path,
+        )
+        manifests.append(
+            {
+                **item,
+                "artifact": model_path.relative_to(run_dir).as_posix(),
+                "preprocessor_artifact": metadata_path.relative_to(run_dir).as_posix(),
             }
         )
+    return manifests
+
+
+def build_threshold_calibrations(
+    frame: pd.DataFrame,
+    oof_predictions: np.ndarray,
+    distribution: str,
+    scale: float,
+) -> tuple[dict[str, dict[str, Any]], pd.DataFrame]:
+    calibrations: dict[str, dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    definitions = {
+        "exact": ["alloy", "am_process", "fatigue_protocol", "r_ratio_bin"],
+        "family": ["alloy_family", "fatigue_protocol", "r_ratio_bin"],
+        "protocol": ["fatigue_protocol"],
+    }
+    for threshold in FATIGUE_THRESHOLDS:
+        raw = pd.Series(
+            aft_survival_probability(
+                oof_predictions,
+                threshold,
+                distribution,
+                scale,
+            ),
+            index=frame.index,
+        )
+        labels = threshold_labels(frame, threshold)
+        for level, columns in definitions.items():
+            for _, group in frame.groupby(columns, dropna=False):
+                key = _fatigue_domain_key(group.iloc[0], level)
+                calibration = fit_isotonic_calibration(
+                    raw.loc[group.index],
+                    labels.loc[group.index],
+                    level=level,
+                    key=key,
+                )
+                labelled = labels.loc[group.index].dropna()
+                positives = int(labelled.eq(1).sum())
+                negatives = int(labelled.eq(0).sum())
+                row = {
+                    "threshold_cycles": threshold,
+                    "level": level,
+                    "key": key,
+                    "labelled_records": len(labelled),
+                    "positive_count": positives,
+                    "negative_count": negatives,
+                    "calibration_available": calibration is not None,
+                }
+                if calibration is not None:
+                    lookup = f"{int(threshold)}::{level}::{key}"
+                    calibrations[lookup] = calibration.to_dict()
+                    calibrated = calibration.predict(raw.loc[labelled.index].to_numpy())
+                    row["raw_brier"] = float(
+                        np.mean(np.square(raw.loc[labelled.index] - labelled))
+                    )
+                    row["calibrated_brier"] = float(
+                        np.mean(np.square(calibrated - labelled.to_numpy()))
+                    )
+                rows.append(row)
+    return calibrations, pd.DataFrame(rows)
+
+
+def _continue_aft_training(
+    *,
+    candidates: list[tuple[str, float]],
+    candidate_predictions: dict[str, np.ndarray],
+    rows: list[dict[str, Any]],
+    folds: list[tuple[np.ndarray, np.ndarray]],
+    oof_fold: np.ndarray,
+    development_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    numeric_features: list[str],
+    categorical_features: list[str],
+    model_key: str,
+    target: str,
+    mode: str,
+    run_dir: Path,
+    profile: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any], pd.DataFrame]:
+    candidate_rounds: dict[str, list[int]] = {key: [] for key in candidate_predictions}
+
+    for distribution, scale in candidates:
+        candidate = f"{distribution}_scale_{scale:g}"
+        print(f"    CV xgboost_aft/{mode}/{candidate}")
+        for fold_number, (train_index, validation_index) in enumerate(
+            folds,
+            start=1,
+        ):
+            oof_fold[validation_index] = fold_number
+            train_df = development_df.iloc[train_index].copy()
+            validation_df = development_df.iloc[validation_index].copy()
+            assert_disjoint_groups(train_df, validation_df)
+            _, train_x, validation_x = prepare_aft_features(
+                train_df,
+                validation_df,
+                numeric_features,
+                categorical_features,
+            )
+            constraints = aft_monotone_constraints(
+                train_x.shape[1],
+                numeric_features,
+            )
+            booster, dvalidation, evaluations = train_aft_booster(
+                train_x,
+                validation_x,
+                train_df,
+                validation_df,
+                profile,
+                distribution=distribution,
+                scale=scale,
+                monotone_constraints=constraints,
+            )
+            predictions = booster.predict(dvalidation)
+            candidate_predictions[candidate][validation_index] = predictions
+            candidate_rounds[candidate].append(booster.best_iteration + 1)
+            nloglik = evaluations["validation"]["aft-nloglik"][booster.best_iteration]
+            rows.append(
+                {
+                    "model_key": model_key,
+                    "target": target,
+                    "mode": mode,
+                    "route": "xgboost_aft",
+                    "candidate": candidate,
+                    "aft_distribution": distribution,
+                    "aft_scale": scale,
+                    "fold": fold_number,
+                    "n_train": len(train_df),
+                    "n_validation": len(validation_df),
+                    **aft_metrics(validation_df, predictions, nloglik),
+                }
+            )
+
+    fold_metrics = pd.DataFrame(rows)
+    comparison = (
+        fold_metrics.groupby(
+            ["candidate", "aft_distribution", "aft_scale"],
+            as_index=False,
+        )
+        .agg(
+            grouped_oof_aft_nloglik=("aft_nloglik", "mean"),
+            grouped_oof_c_index=("harrell_c_index", "mean"),
+            grouped_oof_log_mae=("mae", "mean"),
+            grouped_oof_log_r2=("r2", "mean"),
+        )
+        .sort_values(
+            ["grouped_oof_aft_nloglik", "grouped_oof_c_index"],
+            ascending=[True, False],
+        )
+        .reset_index(drop=True)
+    )
+    comparison["selected"] = False
+    comparison.loc[0, "selected"] = True
+    comparison.to_csv(
+        run_dir / "tables" / "fatigue_route_comparison.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    selected_candidate = str(comparison.iloc[0]["candidate"])
+    selected_distribution = str(comparison.iloc[0]["aft_distribution"])
+    selected_scale = float(comparison.iloc[0]["aft_scale"])
+    oof_predictions = candidate_predictions[selected_candidate]
 
     final_train_df, early_stop_df = make_inner_validation_split(development_df)
     _, train_x, validation_x = prepare_aft_features(
@@ -1283,6 +1827,12 @@ def train_aft_experiment(
         final_train_df,
         early_stop_df,
         profile,
+        distribution=selected_distribution,
+        scale=selected_scale,
+        monotone_constraints=aft_monotone_constraints(
+            train_x.shape[1],
+            numeric_features,
+        ),
     )
     development_clean = clean_features(
         development_df,
@@ -1297,10 +1847,17 @@ def train_aft_experiment(
     development_x = preprocessor.fit_transform(
         development_clean[numeric_features + categorical_features]
     )
+    selected_rounds = int(np.median(candidate_rounds[selected_candidate]))
     booster = train_aft_fixed_rounds(
         development_x,
         development_df,
-        tuned_booster.best_iteration + 1,
+        selected_rounds,
+        distribution=selected_distribution,
+        scale=selected_scale,
+        monotone_constraints=aft_monotone_constraints(
+            development_x.shape[1],
+            numeric_features,
+        ),
     )
     test_clean = clean_features(test_df, numeric_features, categorical_features)
     test_x = preprocessor.transform(test_clean[numeric_features + categorical_features])
@@ -1309,10 +1866,30 @@ def train_aft_experiment(
     test_lower, test_upper, _ = make_aft_bounds(test_df)
     dtest.set_float_info("label_lower_bound", test_lower)
     dtest.set_float_info("label_upper_bound", test_upper)
-    test_nloglik = float(
-        booster.eval(dtest, name="test").split("aft-nloglik:")[-1]
-    )
+    test_nloglik = float(booster.eval(dtest, name="test").split("aft-nloglik:")[-1])
     test_metrics = aft_metrics(test_df, test_predictions, test_nloglik)
+    calibrations, calibration_table = build_threshold_calibrations(
+        development_df,
+        oof_predictions,
+        selected_distribution,
+        selected_scale,
+    )
+    calibration_table.to_csv(
+        run_dir / "tables" / "fatigue_threshold_calibration.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    domain_support = fatigue_domain_support(development_df)
+    domain_models = train_aft_domain_models(
+        development_df,
+        numeric_features,
+        categorical_features,
+        distribution=selected_distribution,
+        scale=selected_scale,
+        rounds=selected_rounds,
+        run_dir=run_dir,
+        mode=mode,
+    )
     model_path = run_dir / "models" / f"fatigue__{mode}__xgboost_aft.json"
     preprocessor_path = (
         run_dir / "models" / f"fatigue__{mode}__xgboost_aft_preprocessor.joblib"
@@ -1328,17 +1905,28 @@ def train_aft_experiment(
                 numeric_features,
                 categorical_features,
             ),
+            "aft_distribution": selected_distribution,
+            "aft_scale": selected_scale,
+            "threshold_calibrations": calibrations,
+            "domain_support": domain_support,
+            "domain_models": domain_models,
+            "training_rounds": selected_rounds,
+            "fatigue_protocol": "e466_conventional",
         },
         preprocessor_path,
     )
-    cv_df = pd.DataFrame(rows)
+    cv_df = pd.DataFrame(rows).loc[
+        lambda data: data["candidate"].eq(selected_candidate)
+    ]
     rows.append(
         {
             "model_key": model_key,
             "target": target,
             "mode": mode,
             "route": "xgboost_aft",
-            "candidate": "xgboost_aft",
+            "candidate": selected_candidate,
+            "aft_distribution": selected_distribution,
+            "aft_scale": selected_scale,
             "fold": "summary",
             "cv_mae_mean": cv_df["mae"].mean(),
             "cv_mae_std": cv_df["mae"].std(),
@@ -1357,12 +1945,10 @@ def train_aft_experiment(
             "test_harrell_c_index": test_metrics["harrell_c_index"],
             **split_audit_fields(development_df, test_df),
             "artifact": model_path.relative_to(run_dir).as_posix(),
-            "preprocessor_artifact": preprocessor_path.relative_to(
-                run_dir
-            ).as_posix(),
+            "preprocessor_artifact": preprocessor_path.relative_to(run_dir).as_posix(),
             "interval_note": (
-                "AFT point prediction is censor-aware; no conformal interval is "
-                "reported for this route."
+                "AFT quantiles use the selected survival distribution; threshold "
+                "probabilities use OOF isotonic calibration when supported."
             ),
         }
     )
@@ -1371,11 +1957,124 @@ def train_aft_experiment(
         "target": target,
         "mode": mode,
         "route": "xgboost_aft",
-        "candidate": "xgboost_aft",
+        "candidate": selected_candidate,
+        "aft_distribution": selected_distribution,
+        "aft_scale": selected_scale,
+        "fatigue_protocol": "e466_conventional",
         "artifact": model_path.relative_to(run_dir).as_posix(),
         "preprocessor_artifact": preprocessor_path.relative_to(run_dir).as_posix(),
+        "domain_models": domain_models,
     }
-    return rows, registry_entry
+    oof_frame = route_oof_frame(
+        development_df,
+        target=target,
+        model_key=model_key,
+        mode=mode,
+        route="xgboost_aft",
+        candidate=selected_candidate,
+        fold=oof_fold,
+        predictions=np.log10(np.maximum(oof_predictions, 1.0)),
+        conformal_q=None,
+        censored=normalise_runout(development_df["runout"]),
+    )
+    for probability in (0.10, 0.20, 0.50, 0.80, 0.90):
+        oof_frame[
+            f"life_quantile_{int(probability * 100):02d}_cycles"
+        ] = aft_life_quantile(
+            oof_predictions,
+            probability,
+            selected_distribution,
+            selected_scale,
+        )
+    for threshold in FATIGUE_THRESHOLDS:
+        suffix = f"{int(threshold / 1_000_000)}m"
+        raw = aft_survival_probability(
+            oof_predictions,
+            threshold,
+            selected_distribution,
+            selected_scale,
+        )
+        calibrated = []
+        calibration_levels = []
+        for index, (_, row) in enumerate(development_df.iterrows()):
+            value, level = calibrate_threshold_probability(
+                float(raw[index]),
+                row,
+                threshold,
+                calibrations,
+            )
+            calibrated.append(value)
+            calibration_levels.append(level)
+        oof_frame[f"raw_probability_reach_{suffix}"] = raw
+        oof_frame[f"probability_reach_{suffix}"] = calibrated
+        oof_frame[f"calibration_level_{suffix}"] = calibration_levels
+    return rows, registry_entry, oof_frame
+
+
+def augment_aft_domain_models(
+    run_dir: str | Path,
+    mode: str = "process_only",
+) -> int:
+    run_dir = Path(run_dir)
+    registry = json.loads((run_dir / "model_registry.json").read_text(encoding="utf-8"))
+    entry = next(
+        item
+        for item in registry
+        if item.get("route") == "xgboost_aft" and item.get("mode") == mode
+    )
+    metadata_path = run_dir / str(entry["preprocessor_artifact"])
+    metadata = joblib.load(metadata_path)
+    config = get_experiment_config(
+        "model2_sn_fatigue",
+        "log10_fatigue_life_cycles",
+        mode,
+    )
+    frame = load_experiment_frame(
+        config["dataset_path"],
+        "log10_fatigue_life_cycles",
+        config["target_bounds"]["log10_fatigue_life_cycles"],
+    )
+    frame = frame.loc[
+        pd.to_numeric(frame["fatigue_life_cycles"], errors="coerce").gt(0)
+    ].reset_index(drop=True)
+    frame = protocolise_fatigue_data(filter_valid_fatigue_loading(frame))
+    frame = frame.loc[
+        frame["fatigue_protocol"].eq("e466_conventional")
+        & frame["event_observed"].notna()
+        & ~frame["stress_consistency_status"].eq("review_required")
+    ].reset_index(drop=True)
+    run_config = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
+    task = next(
+        item
+        for item in run_config["task_configs"]
+        if item["target"] == "log10_fatigue_life_cycles" and item["mode"] == mode
+    )
+    development_df, _ = split_development_and_test(
+        frame,
+        test_groups=set(task["final_test_groups"]),
+    )
+    booster = xgb.Booster()
+    booster.load_model(run_dir / str(entry["artifact"]))
+    rounds = int(metadata.get("training_rounds", booster.num_boosted_rounds()))
+    domain_models = train_aft_domain_models(
+        development_df,
+        list(metadata["numeric_features"]),
+        list(metadata["categorical_features"]),
+        distribution=str(metadata.get("aft_distribution", "normal")),
+        scale=float(metadata.get("aft_scale", 1.0)),
+        rounds=rounds,
+        run_dir=run_dir,
+        mode=mode,
+    )
+    metadata["domain_models"] = domain_models
+    metadata["training_rounds"] = rounds
+    joblib.dump(metadata, metadata_path)
+    entry["domain_models"] = domain_models
+    (run_dir / "model_registry.json").write_text(
+        json.dumps(registry, indent=2),
+        encoding="utf-8",
+    )
+    return len(domain_models)
 
 
 def write_run_configuration(
@@ -1386,23 +2085,27 @@ def write_run_configuration(
     mode: str,
     registry: list[dict[str, Any]] | None = None,
     mlp_available: bool | None = None,
+    targets: list[str] | None = None,
 ) -> None:
     profile_config = get_training_profile(profile)
     task_configs = []
-    for model_key, target, selected_mode in iter_task_mode_targets(mode):
+    for model_key, target, selected_mode in iter_task_mode_targets(
+        mode,
+        targets=targets,
+    ):
         config = get_experiment_config(model_key, target, selected_mode)
         task_config = {
-                "model_key": model_key,
-                "target": target,
-                "mode": selected_mode,
-                "dataset_path": Path(config["dataset_path"])
-                .resolve()
-                .relative_to(get_path().resolve())
-                .as_posix(),
-                "numeric_features": config["numeric_features"],
-                "categorical_features": config["categorical_features"],
-                "diagnostic_only": config["diagnostic_only"],
-            }
+            "model_key": model_key,
+            "target": target,
+            "mode": selected_mode,
+            "dataset_path": Path(config["dataset_path"])
+            .resolve()
+            .relative_to(get_path().resolve())
+            .as_posix(),
+            "numeric_features": config["numeric_features"],
+            "categorical_features": config["categorical_features"],
+            "diagnostic_only": config["diagnostic_only"],
+        }
         if registry:
             matching = next(
                 (
@@ -1438,11 +2141,23 @@ def write_run_configuration(
         "random_state": 42,
         "test_fraction": 0.15,
         "cv": f"{n_splits}-fold GroupKFold",
-        "grouping": "DOI first, then dataset_id, then source_id",
+        "grouping": (
+            "dataset_id first for fatigue S-N curves; DOI first for static "
+            "targets; source_id and record_id are fallbacks"
+        ),
         "selection_metric": "grouped-CV OOF R2; RMSE and MAE tie-breakers",
         "fatigue_stress_amplitude_bounds_MPa": [1.0, 3000.0],
-        "ordinary_fatigue_subset": "uncensored failures",
+        "ordinary_fatigue_subset": (
+            "ASTM E466-style conventional-frequency uncensored failures; "
+            "diagnostic baseline only"
+        ),
+        "formal_fatigue_route": "protocol-aware monotonic XGBoost-AFT",
+        "fatigue_protocol_frequency_Hz": {
+            "e466_conventional_max": 200,
+            "ultrasonic_vhcf_min": 1000,
+        },
         "prediction_modes": selected_modes(mode),
+        "selected_targets": targets or "all",
         "fatigue_routes": [
             "ordinary_regression",
             "xgboost_aft",
@@ -1462,6 +2177,7 @@ def run_experiment_suite(
     profile: str = "balanced",
     n_splits: int | None = None,
     mode: str = "process_only",
+    targets: list[str] | None = None,
 ) -> Path:
     profile_config = get_training_profile(profile)
     mlp_available = (
@@ -1489,17 +2205,21 @@ def run_experiment_suite(
         n_splits,
         mode,
         mlp_available=mlp_available,
+        targets=targets,
     )
     all_rows: list[dict[str, Any]] = []
     registry: list[dict[str, Any]] = []
     physical_checks: list[dict[str, Any]] = []
+    oof_parts: list[pd.DataFrame] = []
 
-    for model_key, target, selected_mode in iter_task_mode_targets(mode):
+    for model_key, target, selected_mode in iter_task_mode_targets(
+        mode,
+        targets=targets,
+    ):
         print(
-            f"\nTraining ordinary route: "
-            f"{model_key} / {target} / {selected_mode}"
+            f"\nTraining ordinary route: " f"{model_key} / {target} / {selected_mode}"
         )
-        rows, entry = train_conventional_experiment(
+        rows, entry, oof_frame = train_conventional_experiment(
             model_key,
             target,
             selected_mode,
@@ -1509,10 +2229,12 @@ def run_experiment_suite(
         )
         all_rows.extend(rows)
         registry.append(entry)
+        oof_parts.append(oof_frame)
 
-    for selected_mode in modes:
+    include_fatigue = targets is None or "log10_fatigue_life_cycles" in targets
+    for selected_mode in modes if include_fatigue else []:
         print(f"\nTraining Basquin routes: {selected_mode}")
-        rows, entries, checks = train_basquin_experiment(
+        rows, entries, checks, basquin_oof = train_basquin_experiment(
             selected_mode,
             run_dir,
             n_splits,
@@ -1521,9 +2243,10 @@ def run_experiment_suite(
         all_rows.extend(rows)
         registry.extend(entries)
         physical_checks.extend(checks)
+        oof_parts.append(basquin_oof)
 
         print(f"\nTraining XGBoost-AFT route: {selected_mode}")
-        rows, entry = train_aft_experiment(
+        rows, entry, aft_oof = train_aft_experiment(
             selected_mode,
             run_dir,
             n_splits,
@@ -1531,6 +2254,7 @@ def run_experiment_suite(
         )
         all_rows.extend(rows)
         registry.append(entry)
+        oof_parts.append(aft_oof)
 
     metrics_df = pd.DataFrame(all_rows)
     metrics_df.to_csv(
@@ -1546,7 +2270,9 @@ def run_experiment_suite(
         | metrics_df.get(
             "fold",
             pd.Series(index=metrics_df.index, dtype="object"),
-        ).astype(str).eq("summary")
+        )
+        .astype(str)
+        .eq("summary")
     ].copy()
     summary_df.to_csv(
         run_dir / "tables" / "experiment_summary.csv",
@@ -1555,6 +2281,12 @@ def run_experiment_suite(
     )
     pd.DataFrame(physical_checks).to_csv(
         run_dir / "tables" / "physical_checks.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    oof_df = pd.concat(oof_parts, ignore_index=True) if oof_parts else pd.DataFrame()
+    oof_df.to_csv(
+        run_dir / "tables" / "oof_predictions.csv",
         index=False,
         encoding="utf-8-sig",
     )
@@ -1570,5 +2302,6 @@ def run_experiment_suite(
         mode,
         registry=registry,
         mlp_available=mlp_available,
+        targets=targets,
     )
     return run_dir

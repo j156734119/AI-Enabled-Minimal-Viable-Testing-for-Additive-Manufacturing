@@ -51,6 +51,29 @@ def test_deterministic_audit_status(overrides, expected_status):
     assert audited.loc[0, "audit_status"] == expected_status
 
 
+def test_review_triage_blocks_only_high_impact_review():
+    high = audit_extracted_records(pd.DataFrame([make_record(evidence_text="")])).iloc[
+        0
+    ]
+    low = audit_extracted_records(
+        pd.DataFrame(
+            [
+                make_record(
+                    uts_MPa=None,
+                    elongation_percent=8.0,
+                    confidence=0.65,
+                )
+            ]
+        )
+    ).iloc[0]
+
+    assert high["review_priority"] >= 60
+    assert bool(high["review_blocking"])
+    assert low["audit_status"] == "human_review_required"
+    assert low["review_priority"] < 60
+    assert not bool(low["review_blocking"])
+
+
 def test_load_approved_record_keys_requires_audit_file(tmp_path):
     with pytest.raises(FileNotFoundError, match="04b_audit_extractions"):
         load_approved_record_keys(tmp_path / "missing.csv")
@@ -123,9 +146,9 @@ def test_merge_stops_when_candidate_changed_after_audit(tmp_path):
     audit_path = tmp_path / "audit.csv"
     output_path = tmp_path / "output.csv"
 
-    pd.DataFrame(
-        [{"source_id": "baseline", "record_id": "base_1"}]
-    ).to_csv(master_path, index=False)
+    pd.DataFrame([{"source_id": "baseline", "record_id": "base_1"}]).to_csv(
+        master_path, index=False
+    )
     candidates = pd.DataFrame([make_record()])
     audit_extracted_records(candidates).to_csv(audit_path, index=False)
     candidates.loc[0, "uts_MPa"] = 1000

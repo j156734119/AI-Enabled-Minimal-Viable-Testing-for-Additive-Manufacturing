@@ -83,6 +83,10 @@ AUDIT_DECISION_COLUMNS = [
     "audit_method",
     "reviewed_by",
     "reviewed_at",
+    "review_priority",
+    "review_blocking",
+    "review_reason_codes",
+    "impact_scope",
 ]
 
 FINGERPRINT_COLUMNS = list(
@@ -150,7 +154,70 @@ def has_useful_data(row: pd.Series) -> bool:
     return any(field in row and not is_missing(row[field]) for field in USEFUL_FIELDS)
 
 
-def audit_record(row: pd.Series) -> dict[str, str]:
+def record_impact_scope(row: pd.Series) -> str:
+    if any(
+        not is_missing(row.get(field)) for field in ["uts_MPa", "yield_strength_MPa"]
+    ):
+        return "static_primary"
+    if any(
+        not is_missing(row.get(field))
+        for field in ["fatigue_life_cycles", "log10_fatigue_life_cycles"]
+    ):
+        return "fatigue"
+    if any(
+        not is_missing(row.get(field))
+        for field in ["elongation_percent", "youngs_modulus_GPa"]
+    ):
+        return "static_secondary"
+    return "general"
+
+
+def review_triage(
+    row: pd.Series,
+    *,
+    reasons: list[str],
+    status: str,
+) -> dict[str, Any]:
+    scope = record_impact_scope(row)
+    if status != "human_review_required":
+        return {
+            "review_priority": 0,
+            "review_blocking": False,
+            "review_reason_codes": "",
+            "impact_scope": scope,
+        }
+
+    priority = 10
+    if scope == "static_primary":
+        priority += 25
+    elif scope == "fatigue":
+        priority += 20
+    elif scope == "static_secondary":
+        priority += 10
+
+    if any(reason.startswith("missing:source") for reason in reasons):
+        priority += 35
+    if any(reason.startswith("missing:evidence_text") for reason in reasons):
+        priority += 30
+    if any(reason.startswith("missing:record_id") for reason in reasons):
+        priority += 25
+    if any("confidence" in reason for reason in reasons):
+        priority += 15
+    if "needs_human_check:true" in reasons:
+        priority += 20
+    if "outside_current_metal_am_scope" in reasons:
+        priority += 30
+
+    priority = min(priority, 100)
+    return {
+        "review_priority": priority,
+        "review_blocking": priority >= 60,
+        "review_reason_codes": ";".join(reasons),
+        "impact_scope": scope,
+    }
+
+
+def audit_record(row: pd.Series) -> dict[str, Any]:
     reasons: list[str] = []
     missing_fields = [
         field
@@ -160,18 +227,22 @@ def audit_record(row: pd.Series) -> dict[str, str]:
     numeric_issues = find_numeric_issues(row)
 
     if not has_useful_data(row):
-        return {
+        decision = {
             "audit_status": "rejected",
             "audit_reason": "no_useful_am_or_mechanical_data",
             "audit_method": "deterministic",
         }
+        decision.update(review_triage(row, reasons=[], status="rejected"))
+        return decision
 
     if numeric_issues:
-        return {
+        decision = {
             "audit_status": "rejected",
             "audit_reason": ";".join(numeric_issues),
             "audit_method": "deterministic",
         }
+        decision.update(review_triage(row, reasons=numeric_issues, status="rejected"))
+        return decision
 
     if missing_fields:
         reasons.append("missing:" + ",".join(missing_fields))
@@ -184,11 +255,19 @@ def audit_record(row: pd.Series) -> dict[str, str]:
     if pd.isna(confidence):
         reasons.append("missing:confidence")
     elif confidence < 0 or confidence > 1:
-        return {
+        decision = {
             "audit_status": "rejected",
             "audit_reason": "confidence:outside_0_1",
             "audit_method": "deterministic",
         }
+        decision.update(
+            review_triage(
+                row,
+                reasons=["confidence:outside_0_1"],
+                status="rejected",
+            )
+        )
+        return decision
     elif confidence < 0.70:
         reasons.append("confidence_below_0.70")
 
@@ -209,17 +288,27 @@ def audit_record(row: pd.Series) -> dict[str, str]:
         reasons.append("outside_current_metal_am_scope")
 
     if reasons:
-        return {
+        decision = {
             "audit_status": "human_review_required",
             "audit_reason": ";".join(reasons),
             "audit_method": "deterministic",
         }
+        decision.update(
+            review_triage(
+                row,
+                reasons=reasons,
+                status="human_review_required",
+            )
+        )
+        return decision
 
-    return {
+    decision = {
         "audit_status": "approved",
         "audit_reason": "deterministic_checks_passed",
         "audit_method": "deterministic",
     }
+    decision.update(review_triage(row, reasons=[], status="approved"))
+    return decision
 
 
 def audit_extracted_records(df: pd.DataFrame) -> pd.DataFrame:
@@ -233,6 +322,10 @@ def audit_extracted_records(df: pd.DataFrame) -> pd.DataFrame:
             "audit_method",
             "reviewed_by",
             "reviewed_at",
+            "review_priority",
+            "review_blocking",
+            "review_reason_codes",
+            "impact_scope",
         ]:
             result[column] = pd.Series(dtype="string")
         return result
@@ -243,8 +336,12 @@ def audit_extracted_records(df: pd.DataFrame) -> pd.DataFrame:
     for column in decisions.columns:
         result[column] = decisions[column].astype("object").to_numpy(copy=True)
 
-    result["reviewed_by"] = pd.Series([""] * len(result), index=result.index, dtype="object")
-    result["reviewed_at"] = pd.Series([""] * len(result), index=result.index, dtype="object")
+    result["reviewed_by"] = pd.Series(
+        [""] * len(result), index=result.index, dtype="object"
+    )
+    result["reviewed_at"] = pd.Series(
+        [""] * len(result), index=result.index, dtype="object"
+    )
     return result.copy(deep=True)
 
 
@@ -301,7 +398,9 @@ def load_approved_record_keys(audit_path: str | Path) -> pd.DataFrame:
         missing = ", ".join(sorted(missing_columns))
         raise ValueError(f"Extraction audit is missing required columns: {missing}")
 
-    invalid_statuses = set(audit_df["audit_status"].dropna().astype(str)) - AUDIT_STATUSES
+    invalid_statuses = (
+        set(audit_df["audit_status"].dropna().astype(str)) - AUDIT_STATUSES
+    )
 
     if invalid_statuses:
         invalid = ", ".join(sorted(invalid_statuses))
@@ -319,7 +418,9 @@ def load_approved_record_keys(audit_path: str | Path) -> pd.DataFrame:
     )
 
     if duplicate_keys.any():
-        raise ValueError("Extraction audit contains duplicate source_id/record_id keys.")
+        raise ValueError(
+            "Extraction audit contains duplicate source_id/record_id keys."
+        )
 
     approved = audit_df["audit_status"].eq("approved")
     manual_approved = approved & audit_df["audit_method"].eq("human_review")
@@ -332,6 +433,16 @@ def load_approved_record_keys(audit_path: str | Path) -> pd.DataFrame:
         raise ValueError(
             "Human-approved records require reviewed_by and reviewed_at metadata."
         )
+
+    optional_defaults: dict[str, Any] = {
+        "review_priority": 0,
+        "review_blocking": False,
+        "review_reason_codes": "",
+        "impact_scope": "general",
+    }
+    for column, default in optional_defaults.items():
+        if column not in audit_df.columns:
+            audit_df[column] = default
 
     return audit_df.loc[
         approved,

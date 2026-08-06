@@ -14,7 +14,11 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from am_mvt.utils.text import normalise_doi, normalise_identifier
 
 
-def build_evaluation_groups(df: pd.DataFrame) -> pd.Series:
+def build_evaluation_groups(
+    df: pd.DataFrame,
+    *,
+    prefer_dataset: bool = False,
+) -> pd.Series:
     doi = df.get("doi", pd.Series(pd.NA, index=df.index)).map(normalise_doi)
     dataset_id = df.get(
         "dataset_id",
@@ -30,12 +34,19 @@ def build_evaluation_groups(df: pd.DataFrame) -> pd.Series:
     ).map(normalise_identifier)
 
     groups = pd.Series(index=df.index, dtype="string")
-    groups.loc[doi.ne("")] = "doi:" + doi.loc[doi.ne("")]
+    if prefer_dataset:
+        groups.loc[dataset_id.ne("")] = "dataset:" + dataset_id.loc[
+            dataset_id.ne("")
+        ]
+    else:
+        groups.loc[doi.ne("")] = "doi:" + doi.loc[doi.ne("")]
 
     missing = groups.isna()
-    groups.loc[missing & dataset_id.ne("")] = (
-        "dataset:" + dataset_id.loc[missing & dataset_id.ne("")]
-    )
+    fallback = doi if prefer_dataset else dataset_id
+    prefix = "doi:" if prefer_dataset else "dataset:"
+    groups.loc[missing & fallback.ne("")] = prefix + fallback.loc[
+        missing & fallback.ne("")
+    ]
 
     missing = groups.isna()
     groups.loc[missing & source_id.ne("")] = (
@@ -59,7 +70,10 @@ def load_experiment_frame(
         lower, upper = target_bounds
         df = df.loc[df[target].between(lower, upper, inclusive="both")].copy()
 
-    df["evaluation_group_id"] = build_evaluation_groups(df)
+    df["evaluation_group_id"] = build_evaluation_groups(
+        df,
+        prefer_dataset=target == "log10_fatigue_life_cycles",
+    )
     return df.reset_index(drop=True)
 
 

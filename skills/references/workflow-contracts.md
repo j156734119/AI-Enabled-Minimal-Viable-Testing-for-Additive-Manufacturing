@@ -4,6 +4,7 @@
 
 | Skill | Status |
 |---|---|
+| multi-agent-workflow-orchestration | operational |
 | source-screening | operational |
 | pdf-provenance | operational |
 | evidence-grounded-extraction | operational |
@@ -26,10 +27,17 @@
 | Master modelling data | `data/processed/master_modelling_dataset.csv` |
 | Merge summary | `data/processed/llm_merge_summary.csv` |
 | Modelling views | `data/processed/view_model*.csv` |
-| Model evidence | `outputs/tables/project_*.csv` |
+| Model evidence | `outputs/experiments/<run_name>/tables/experiment_summary.csv` |
+| OOF predictions | `outputs/experiments/<run_name>/tables/oof_predictions.csv` |
 | Model explanation | `outputs/experiments/<run_name>/tables/feature_importance.csv` |
 | Relationship evidence | `outputs/experiments/<run_name>/tables/relationship_evidence.csv` |
-| Testing matrix | `outputs/tables/reduced_testing_matrix.csv` |
+| Alloy-process domain readiness | `outputs/experiments/<run_name>/tables/alloy_process_domain_readiness.csv` |
+| Domain priority shortlist | `outputs/experiments/<run_name>/tables/domain_priority_shortlist.csv` |
+| Client target template | `outputs/experiments/<run_name>/tables/client_target_template.csv` |
+| Client-targeted pilot matrix | `outputs/experiments/<run_name>/tables/client_case_<case_id>_*.csv` |
+| Static condition evidence | `outputs/experiments/<run_name>/tables/condition_evidence_static.csv` |
+| Fatigue condition evidence | `outputs/experiments/<run_name>/tables/condition_evidence_fatigue.csv` |
+| Budget plans | `outputs/experiments/<run_name>/tables/selected_*_plan_*.csv` |
 
 Source screening is performed only through the OpenAI Responses API
 `web_search` tool. Previous canonical source-screening tables are retained under
@@ -55,3 +63,7 @@ least 0.70, `needs_human_check=false`, useful AM or mechanical data, and valid
 numeric ranges. Only approved keys enter the master modelling dataset.
 
 Human decisions must preserve `audit_method`, `reviewed_by`, and `reviewed_at`.
+Review triage also preserves `review_priority`, `review_blocking`,
+`review_reason_codes`, and `impact_scope`. Low-impact review records remain
+isolated without blocking the approved-data workflow; priority 60 or higher is
+blocking.

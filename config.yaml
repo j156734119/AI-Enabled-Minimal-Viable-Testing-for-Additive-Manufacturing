@@ -46,9 +46,13 @@ schema:
     - "alloy"
     - "alloy_family"
     - "am_process"
+    - "am_environment"
     - "build_orientation"
     - "surface_condition"
+    - "surface_roughness_Ra_um"
+    - "surface_roughness_Rz_um"
     - "heat_treatment"
+    - "material_state"
     - "laser_power_W"
     - "scan_speed_mm_s"
     - "hatch_spacing_um"
@@ -57,6 +61,14 @@ schema:
     - "defect_type"
     - "porosity_percent"
     - "residual_stress_indicator"
+    - "residual_stress_MPa"
+    - "specimen_geometry"
+    - "critical_section_size_mm"
+    - "stress_concentration_factor"
+    - "fatigue_environment"
+    - "fatigue_machine"
+    - "fatigue_standard"
+    - "load_control"
 
   output_variables:
     - "yield_strength_MPa"
@@ -75,3 +87,31 @@ openai:
 modelling:
   random_state: 42
   test_size: 0.2
+
+multi_agent:
+  existing_artifacts_only: true
+  manager_mode: "openai_with_deterministic_fallback"
+  modelling_profile: "standard"
+  prediction_mode: "process_only"
+  cv_folds: 5
+  targets:
+    - "uts_MPa"
+    - "yield_strength_MPa"
+    - "elongation_percent"
+    - "youngs_modulus_GPa"
+    - "log10_fatigue_life_cycles"
+
+testing_matrix:
+  static_budgets: [24, 36, 48]
+  fatigue_budgets: [30, 45, 60]
+  static_replicates: 3
+  fatigue_stress_levels: 5
+  fatigue_replicates_per_level: 3
+  fatigue_protocol:
+    e466_max_frequency_Hz: 200
+    ultrasonic_min_frequency_Hz: 1000
+    life_thresholds_cycles: [10000000, 20000000]
+    reference_stress_amplitude_MPa: 110
+    reference_r_ratio: -1
+    reference_frequency_Hz: 50
+    stress_levels_MPa: [80, 95, 110, 125, 140]

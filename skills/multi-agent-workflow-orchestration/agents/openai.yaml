@@ -1,0 +1,4 @@
+interface:
+  display_name: "Multi-Agent Workflow Orchestration"
+  short_description: "Route bounded AM evidence, modelling, and test decisions"
+  default_prompt: "Use $multi-agent-workflow-orchestration to run the existing-artifacts-only AM workflow."

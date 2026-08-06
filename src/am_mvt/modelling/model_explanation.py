@@ -21,6 +21,7 @@ from am_mvt.modelling.experiment_data import (
 )
 from am_mvt.modelling.experiment_inference import predict_ordinary
 from am_mvt.modelling.experiment_metrics import regression_metrics
+from am_mvt.modelling.fatigue_protocol import protocolise_fatigue_data
 from am_mvt.modelling.experiment_training import (
     filter_valid_fatigue_loading,
     get_model_candidates,
@@ -93,6 +94,11 @@ def evaluation_frames(
 
     if model_key == "model2_sn_fatigue":
         frame = filter_valid_fatigue_loading(frame)
+        frame = protocolise_fatigue_data(frame)
+        frame = frame.loc[
+            frame["fatigue_protocol"].eq("e466_conventional")
+            & ~frame["stress_consistency_status"].eq("review_required")
+        ].reset_index(drop=True)
         if final_holdout_groups is None:
             final_holdout_groups = select_final_holdout_groups(frame)
         runout = normalise_runout(frame["runout"])

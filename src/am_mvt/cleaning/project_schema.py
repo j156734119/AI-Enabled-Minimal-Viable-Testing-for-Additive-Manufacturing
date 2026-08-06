@@ -30,6 +30,7 @@ INPUT_COLUMNS = [
     "alloy_family",
     "am_process",
     "machine_model",
+    "am_environment",
     "laser_power_W",
     "scan_speed_mm_s",
     "hatch_spacing_um",
@@ -41,13 +42,26 @@ INPUT_COLUMNS = [
     "layer_rotation_degree",
     "build_plate_temperature_C",
     "surface_condition",
+    "surface_roughness_Ra_um",
+    "surface_roughness_Rz_um",
     "heat_treatment",
+    "material_state",
     "post_processing",
     "porosity_percent",
     "relative_density_percent",
     "density_measurement_method",
     "defect_type",
     "residual_stress_indicator",
+    "residual_stress_MPa",
+    "specimen_description",
+    "specimen_geometry",
+    "critical_section_dimensions_mm",
+    "critical_section_size_mm",
+    "stress_concentration_factor",
+    "fatigue_environment",
+    "fatigue_machine",
+    "fatigue_standard",
+    "load_control",
 ]
 
 OUTPUT_COLUMNS = [
@@ -61,6 +75,11 @@ OUTPUT_COLUMNS = [
     "stress_amplitude_MPa",
     "max_stress_MPa",
     "strain_amplitude",
+    "total_strain_amplitude",
+    "plastic_strain_amplitude",
+    "elastic_strain_amplitude",
+    "strain_ratio",
+    "strain_rate",
     "delta_K_MPa_sqrt_m",
     "da_dN_m_per_cycle",
     "r_ratio",
@@ -69,6 +88,13 @@ OUTPUT_COLUMNS = [
     "fatigue_life_h",
     "log10_fatigue_life_cycles",
     "runout",
+    "fatigue_protocol",
+    "control_mode",
+    "frequency_regime",
+    "event_observed",
+    "censor_lower_cycles",
+    "runout_limit_cycles",
+    "stress_definition",
     "failure_mode",
     "fracture_origin",
 ]
@@ -135,6 +161,11 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "model",
         "machine model",
         "machine name",
+    ],
+    "am_environment": [
+        "am environment",
+        "build environment",
+        "processing atmosphere",
     ],
     "laser_power_W": [
         "power",
@@ -219,6 +250,16 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "surface treatment",
         "surface finish",
     ],
+    "surface_roughness_Ra_um": [
+        "surface roughness ra",
+        "surface roughness ra um",
+        "ra um",
+    ],
+    "surface_roughness_Rz_um": [
+        "surface roughness rz",
+        "surface roughness rz um",
+        "rz um",
+    ],
     "heat_treatment": [
         "heat treatment",
         "treated",
@@ -229,6 +270,11 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "processing sequence and parameters",
         "post processing",
         "post-processing",
+    ],
+    "material_state": [
+        "material state",
+        "metallurgical condition",
+        "temper condition",
     ],
     "porosity_percent": [
         "porosity",
@@ -255,6 +301,56 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "defect",
         "pore type",
         "flaw type",
+    ],
+    "residual_stress_indicator": [
+        "residual stress indicator",
+        "residual stress state",
+    ],
+    "residual_stress_MPa": [
+        "residual stress",
+        "residual stress mpa",
+        "surface residual stress mpa",
+    ],
+    "specimen_description": [
+        "specimens description",
+        "specimen description",
+        "specimen type",
+    ],
+    "specimen_geometry": [
+        "specimen geometry",
+        "geometry",
+    ],
+    "critical_section_dimensions_mm": [
+        "critical cross-section size of specimens",
+        "critical cross-section size of specimens mm",
+        "critical section dimensions",
+        "critical section dimensions mm",
+    ],
+    "critical_section_size_mm": [
+        "critical section size",
+        "critical section size mm",
+    ],
+    "stress_concentration_factor": [
+        "stress concentration factor of specimens",
+        "stress concentration factor",
+        "kt",
+    ],
+    "fatigue_environment": [
+        "fatigue environment",
+        "test environment",
+    ],
+    "fatigue_machine": [
+        "fatigue machine",
+        "fatigue testing machine",
+        "test machine",
+    ],
+    "fatigue_standard": [
+        "fatigue standard",
+        "test standard",
+    ],
+    "load_control": [
+        "load control",
+        "loading control",
     ],
     "test_type": [
         "types of fatigue tests",
@@ -368,6 +464,20 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "frequency hz",
         "frequency (hz)",
     ],
+    "total_strain_amplitude": [
+        "total strain amplitude",
+        "total_strain_amplitude",
+    ],
+    "plastic_strain_amplitude": [
+        "plastic strain amplitude",
+        "plastic_strain_amplitude",
+    ],
+    "elastic_strain_amplitude": [
+        "elastic strain amplitude",
+        "elastic_strain_amplitude",
+    ],
+    "strain_ratio": ["strain ratio", "strain_ratio"],
+    "strain_rate": ["strain rate", "strain_rate"],
     "fatigue_life_cycles": [
         "fatigue life",
         "fatigue life cycles",
@@ -397,6 +507,13 @@ COLUMN_ALIASES: dict[str, list[str]] = {
         "censored",
         "survived",
     ],
+    "fatigue_protocol": ["fatigue protocol", "fatigue_protocol"],
+    "control_mode": ["control mode", "control_mode"],
+    "frequency_regime": ["frequency regime", "frequency_regime"],
+    "event_observed": ["event observed", "event_observed"],
+    "censor_lower_cycles": ["censor lower cycles", "censor_lower_cycles"],
+    "runout_limit_cycles": ["runout limit cycles", "runout_limit_cycles"],
+    "stress_definition": ["stress definition", "stress_definition"],
     "failure_mode": [
         "failure mode",
         "fracture mode",
