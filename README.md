@@ -191,18 +191,21 @@ canonical CSV files under `archive/source_search_runs/<utc_timestamp>/`.
 The Metals search uses the journal-specific `mdpi.com/2075-4701` path and a
 focused replenishment request if the first pass returns no valid Metals paper.
 
-Historical datasets, models, and experiment outputs can be reviewed and moved
-into the local ignored archive with:
+Historical datasets, models, experiment outputs, and generated meeting
+documents can be reviewed and moved into the local ignored archive with:
 
 ```text
 python scripts/archive_legacy_artifacts.py --keep-experiment balanced_v2
 python scripts/archive_legacy_artifacts.py --keep-experiment balanced_v2 --apply
 ```
 
-The first command is a dry run. The run named by `--keep-experiment` is
-retained in place. Archive names use UTC timestamps by default, and every
-moved file is recorded in `archive_manifest.csv` with its source path,
-archive path, size, modification time, and SHA-256.
+Repeat `--keep-experiment` to retain multiple canonical runs. Add
+`--include-documents`, `--include-document-code`, and
+`--include-local-working-artifacts` to archive generated Word/PDF files,
+meeting-document helper scripts, and temporary document workspaces. The first
+command is a dry run. Archive names use UTC timestamps by default, and every
+moved file is recorded in `archive_manifest.csv` with its source path, archive
+path, size, modification time, and SHA-256.
 
 Place newly downloaded PDFs in:
 

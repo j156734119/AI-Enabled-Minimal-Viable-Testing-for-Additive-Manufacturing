@@ -110,3 +110,64 @@ def test_archive_plan_can_include_duplicate_derivatives(tmp_path, monkeypatch):
 
     assert duplicate.resolve() in {move.source for move in moves}
     assert all("cleanup_test" in str(move.destination) for move in moves)
+
+
+def test_archive_plan_keeps_multiple_experiment_runs(tmp_path, monkeypatch):
+    module = load_archive_module()
+    monkeypatch.setattr(module, "get_path", lambda *parts: tmp_path.joinpath(*parts))
+
+    experiments = tmp_path / "outputs" / "experiments"
+    experiments.mkdir(parents=True)
+    keep_a = experiments / "five_target"
+    keep_b = experiments / "fatigue_current"
+    archive_run = experiments / "legacy_run"
+    for directory in [keep_a, keep_b, archive_run]:
+        directory.mkdir()
+        (directory / "summary.csv").write_text(directory.name, encoding="utf-8")
+
+    moves = module.build_move_plan(
+        archive_name="cleanup_test",
+        keep_experiment=None,
+        keep_experiments=["five_target", "fatigue_current"],
+    )
+    planned_sources = {move.source for move in moves}
+
+    assert archive_run.resolve() in planned_sources
+    assert keep_a.resolve() not in planned_sources
+    assert keep_b.resolve() not in planned_sources
+
+
+def test_archive_plan_can_include_documents_and_document_code(tmp_path, monkeypatch):
+    module = load_archive_module()
+    monkeypatch.setattr(module, "get_path", lambda *parts: tmp_path.joinpath(*parts))
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    meeting_doc = outputs / "Meeting two.docx"
+    meeting_doc.write_text("document", encoding="utf-8")
+    qa_dir = outputs / "qa_meeting_two"
+    qa_dir.mkdir()
+    (qa_dir / "page-1.png").write_text("preview", encoding="utf-8")
+    style_file = outputs / "meeting_one_style.json"
+    style_file.write_text("{}", encoding="utf-8")
+
+    dissertation_dir = tmp_path / "data" / "interim" / "dissertation_outline_docx"
+    dissertation_dir.mkdir(parents=True)
+    (dissertation_dir / "outline.pdf").write_text("pdf", encoding="utf-8")
+
+    script = tmp_path / module.LEGACY_DOCUMENT_CODE_FILES[0]
+    script.parent.mkdir(exist_ok=True)
+    script.write_text("print('legacy')", encoding="utf-8")
+
+    moves = module.build_move_plan(
+        archive_name="cleanup_test",
+        include_documents=True,
+        include_document_code=True,
+    )
+    planned_sources = {move.source for move in moves}
+
+    assert meeting_doc.resolve() in planned_sources
+    assert qa_dir.resolve() in planned_sources
+    assert style_file.resolve() in planned_sources
+    assert dissertation_dir.resolve() in planned_sources
+    assert script.resolve() in planned_sources

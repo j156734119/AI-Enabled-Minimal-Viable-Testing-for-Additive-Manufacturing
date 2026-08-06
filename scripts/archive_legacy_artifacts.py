@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import shutil
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,19 @@ CANONICAL_INTERIM_FILES = [
     "data/interim/llm_extraction_audit.csv",
     "data/interim/llm_extraction_audit_review.csv",
 ]
+LEGACY_DOCUMENT_CODE_FILES = [
+    "scripts/build_meeting_two_docs.py",
+    "scripts/build_meeting_two_simple.py",
+    "scripts/build_project_progress_update.py",
+    "scripts/build_three_line_progress_update.py",
+]
+LOCAL_WORKING_ARTIFACTS = [
+    ".codex-doc-review-meeting-three",
+    ".codex_doc_work",
+    ".codex_tmp",
+    "tmp",
+]
+DOCUMENT_EXTENSIONS = {".doc", ".docx", ".pdf"}
 
 
 @dataclass(frozen=True)
@@ -55,9 +69,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--archive-name", default=default_archive_name())
-    parser.add_argument("--keep-experiment", default="balanced_v2")
+    parser.add_argument(
+        "--keep-experiment",
+        action="append",
+        dest="keep_experiments",
+        help=(
+            "Experiment run to retain in place. Repeat the option to keep "
+            "multiple runs. Defaults to balanced_v2 when omitted."
+        ),
+    )
     parser.add_argument("--include-current-processed", action="store_true")
     parser.add_argument("--include-duplicate-derivatives", action="store_true")
+    parser.add_argument("--include-documents", action="store_true")
+    parser.add_argument("--include-document-code", action="store_true")
+    parser.add_argument("--include-local-working-artifacts", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -68,13 +93,20 @@ def _destination(archive_root: Path, source: Path) -> Path:
 def build_move_plan(
     *,
     archive_name: str = "cleanup_test",
-    keep_experiment: str = "balanced_v2",
+    keep_experiment: str | None = "balanced_v2",
+    keep_experiments: Iterable[str] | None = None,
     include_current_processed: bool = False,
     include_duplicate_derivatives: bool = False,
+    include_documents: bool = False,
+    include_document_code: bool = False,
+    include_local_working_artifacts: bool = False,
 ) -> list[MoveItem]:
     archive_root = get_path("archive", archive_name)
     sources: list[Path] = []
     processed_dir = get_path("data", "processed")
+    retained_experiments = set(keep_experiments or [])
+    if keep_experiment:
+        retained_experiments.add(keep_experiment)
 
     sources.extend(
         path
@@ -116,7 +148,7 @@ def build_move_plan(
         sources.extend(
             path
             for path in experiments_dir.iterdir()
-            if path.is_dir() and path.name != keep_experiment
+            if path.is_dir() and path.name not in retained_experiments
         )
 
     if include_duplicate_derivatives:
@@ -129,6 +161,48 @@ def build_move_plan(
                 continue
             for prefix in DUPLICATE_SOURCE_PREFIXES:
                 sources.extend(sorted(directory.glob(f"{prefix}*")))
+
+    if include_documents:
+        outputs_dir = get_path("outputs")
+        if outputs_dir.exists():
+            sources.extend(
+                path
+                for path in outputs_dir.iterdir()
+                if path.is_file() and path.suffix.lower() in DOCUMENT_EXTENSIONS
+            )
+            sources.extend(sorted(outputs_dir.glob("qa_meeting_*")))
+            sources.extend(sorted(outputs_dir.glob("qa_progress_update_*")))
+            meeting_style = outputs_dir / "meeting_one_style.json"
+            if meeting_style.exists():
+                sources.append(meeting_style)
+
+        dissertation_documents = get_path(
+            "data",
+            "interim",
+            "dissertation_outline_docx",
+        )
+        if dissertation_documents.exists():
+            sources.append(dissertation_documents)
+
+    if include_document_code:
+        sources.extend(
+            path
+            for path in (
+                get_path(*relative.split("/"))
+                for relative in LEGACY_DOCUMENT_CODE_FILES
+            )
+            if path.exists()
+        )
+
+    if include_local_working_artifacts:
+        sources.extend(
+            path
+            for path in (
+                get_path(*relative.split("/"))
+                for relative in LOCAL_WORKING_ARTIFACTS
+            )
+            if path.exists()
+        )
 
     unique_sources = sorted({path.resolve() for path in sources if path.exists()})
     return [
@@ -211,9 +285,13 @@ def main() -> None:
     args = parse_args()
     moves = build_move_plan(
         archive_name=args.archive_name,
-        keep_experiment=args.keep_experiment,
+        keep_experiment=None,
+        keep_experiments=args.keep_experiments or ["balanced_v2"],
         include_current_processed=args.include_current_processed,
         include_duplicate_derivatives=args.include_duplicate_derivatives,
+        include_documents=args.include_documents,
+        include_document_code=args.include_document_code,
+        include_local_working_artifacts=args.include_local_working_artifacts,
     )
     validate_move_plan(moves)
     rows = build_manifest_rows(moves)
